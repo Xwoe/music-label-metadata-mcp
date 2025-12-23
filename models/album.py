@@ -4,12 +4,17 @@ from typing import List
 import csv
 import json
 
+CSV_SEPARATOR = ";"
+LIST_SEPARATOR = "|"
+STR_SEP = ", "
+
 
 class Track(BaseModel):
     artists: List[str] = []
     track_number: int = 0
     track_title: str = ""
     runtime: int = 0
+    isrc: str = ""
 
     def to_json(self) -> str:
         return self.model_dump_json()
@@ -17,13 +22,27 @@ class Track(BaseModel):
     def to_csv(self) -> str:
         output = []
         output.append(["artists", "track_number", "track_title", "runtime"])
-        output.append([", ".join(self.artists), self.track_number, self.track_title, self.runtime])
-        return "\n".join([",".join(map(str, row)) for row in output])
+        output.append(
+            [
+                LIST_SEPARATOR.join(self.artists),
+                self.track_number,
+                self.track_title,
+                self.runtime,
+                self.isrc,
+            ]
+        )
+        return "\n".join([CSV_SEPARATOR.join(map(str, row)) for row in output])
+
+    @property
+    def artists_str(self) -> str:
+        return STR_SEP.join(self.artists)
+
     def __str__(self):
         return f"Track(artists={self.artists}, track_number={self.track_number}, track_title={self.track_title}, runtime={self.runtime})"
 
+
 class Album(BaseModel):
-    artists: List[str] = []
+    album_artists: List[str] = []
     title: str = ""
     is_compilation: bool = False
     release_date: datetime = datetime.now()
@@ -37,24 +56,54 @@ class Album(BaseModel):
     def to_json(self) -> str:
         return self.model_dump_json()
 
-    def to_csv(self) -> str:
+    def to_csv(self, include_header) -> str:
         output = []
-        output.append(["artist", "release_date", "label", "total_length", "num_tracks", "catalog_number", "tags"])
-        output.append([
-            ", ".join(self.artists) if self.artists else "",
-            self.release_date.isoformat(),
-            self.label,
-            self.total_length,
-            self.num_tracks,
-            self.catalog_number,
-            ", ".join(self.tags)
-        ])
-        output.append([])
-        output.append(["tracks"])
-        output.append(["artists", "track_number", "track_title", "runtime"])
+        if include_header:
+            output.append(
+                [
+                    "album_artists",
+                    "label",
+                    "album_title",
+                    "artists",
+                    "track_number",
+                    "track_title",
+                    "runtime",
+                    "isrc",
+                    "total_length",
+                    "num_tracks",
+                    "release_date",
+                    "catalog_number",
+                    "tags",
+                ]
+            )
+
         for track in self.tracks:
-            output.append([", ".join(track.artists), track.track_number, track.track_title, track.runtime])
-        return "\n".join([",".join(map(str, row)) for row in output])
+            # album part
+            output.append(
+                [
+                    (
+                        LIST_SEPARATOR.join(self.album_artists)
+                        if self.album_artists
+                        else ""
+                    ),
+                    self.label,
+                    self.title,
+                    # track part
+                    LIST_SEPARATOR.join(track.artists),
+                    track.track_number,
+                    track.track_title,
+                    track.runtime,
+                    track.isrc,
+                    self.total_length,
+                    self.num_tracks,
+                    self.release_date.isoformat(),
+                    self.catalog_number,
+                    LIST_SEPARATOR.join(self.tags),
+                ]
+            )
+        output = "\n".join([CSV_SEPARATOR.join(map(str, row)) for row in output])
+        output += "\n"
+        return output
 
     def __str__(self):
-        return f"Album(artists={self.artists}, release_date={self.release_date}, label={self.label}, num_tracks={self.num_tracks})"
+        return f"Album(artists={self.album_artists}, release_date={self.release_date}, label={self.label}, num_tracks={self.num_tracks})"
