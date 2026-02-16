@@ -1,6 +1,8 @@
 import sqlite3
 import polars as pl
 import os
+from sqlalchemy.types import Integer
+from models.names_prefixes import COLUMN_DICT, ReleaseType
 
 
 BANDCAMP_FILENAME = "bandcamp_albums.csv"
@@ -30,6 +32,32 @@ class CatalogMerger:
             how="left",
         )
 
+    def add_unique_release_id(self):
+        self.merged_df = self.merged_df.with_columns(
+            pl.concat_str(["album_artists", "album_title"], separator="|")
+            .hash(seed=0)
+            .cast(pl.Utf8)
+            .alias("release_id")
+        )
+
+    def cleanup_columns(self):
+        self.merged_df = self.merged_df.with_columns(
+            [
+                pl.col("track_number").cast(pl.Int32),
+                pl.col("runtime").cast(pl.Int32),
+                pl.col("total_length").cast(pl.Int32),
+                pl.col("num_tracks").cast(pl.Int32),
+            ]
+        )
+        self.merged_df = self.merged_df.drop_nulls(
+            subset=["album_artists", "album_title"]
+        )
+        self.merged_df[["track_number", "runtime", "total_length", "num_tracks"]] = (
+            self.merged_df[
+                ["track_number", "runtime", "total_length", "num_tracks"]
+            ].fill_nan(0)
+        )
+
     def clean_up_bandcamp_albums(self):
         self.bandcamp_df = self.bandcamp_df.with_columns(
             pl.when(pl.col("album_artists") == "Passed Recordings")
@@ -49,14 +77,98 @@ class CatalogMerger:
             ).alias("catalog_id")
         )
 
+    def clean_up_catalog_columns(self):
+
+        # Process Historical Physical ID and categorize by release type
+        def categorize_physical_id(physical_id):
+            cassette_col = COLUMN_DICT[ReleaseType.CASSETTE]
+            cd_col = COLUMN_DICT[ReleaseType.CD]
+            lp_col = COLUMN_DICT[ReleaseType.LP]
+
+            if physical_id is None:
+                return {cassette_col: None, cd_col: None, lp_col: None}
+
+            cassettes, cds, lps = [], [], []
+            for item in physical_id.split(" / "):
+                if item.startswith("prc0"):
+                    cassettes.append(item)
+                elif item.startswith("prcd0"):
+                    cds.append(item)
+                elif item.startswith("prlp"):
+                    lps.append(item)
+
+            return {
+                cassette_col: " / ".join(cassettes) if cassettes else None,
+                cd_col: " / ".join(cds) if cds else None,
+                lp_col: " / ".join(lps) if lps else None,
+            }
+
+        def categorize_digital_id(digital_id):
+            if digital_id is None:
+                return None
+
+            if digital_id.startswith("PR-"):
+                return digital_id
+
+            return None
+
+        # Rename Archive ID column
+        self.catalog_df = self.catalog_df.rename({"Archive ID": "archive_id"})
+
+        # Create missing columns with null values
+        for col_name in COLUMN_DICT.values():
+            if col_name not in self.catalog_df.columns:
+                self.catalog_df = self.catalog_df.with_columns(
+                    pl.lit(None).alias(col_name)
+                )
+
+        # result = self.catalog_df.select("Historical Physical ID").to_dicts()
+        # map the entries from the "Historical Physical ID" column to the new categorized columns based on release type
+        for col in [
+            COLUMN_DICT[ReleaseType.CASSETTE],
+            COLUMN_DICT[ReleaseType.CD],
+            COLUMN_DICT[ReleaseType.LP],
+        ]:
+            self.catalog_df = self.catalog_df.with_columns(
+                pl.col("Historical Physical ID")
+                .map_elements(
+                    lambda x: categorize_physical_id(x)[col], return_dtype=pl.Utf8
+                )
+                .alias(col)
+            )
+        # copy the values from the `catalog_id` column to the digital catalog column if they are digital ids
+        self.catalog_df = self.catalog_df.with_columns(
+            pl.col("catalog_id")
+            .map_elements(
+                lambda x: categorize_digital_id(x),
+                return_dtype=pl.Utf8,
+            )
+            .alias(COLUMN_DICT[ReleaseType.DIGITAL])
+        )
+
+    def drop_columns(self):
+        colunns_to_drop = ["catalog_number", "Historical Physical ID", "Catalog ID"]
+        self.merged_df = self.merged_df.drop(columns=colunns_to_drop)
+
     def save_merged_dataframe(self):
         self.merged_df.write_csv(self.merged_filepath, separator=";")
 
     def convert_to_sqlite(self):
 
+        dtype_mapping = {
+            # "track_number": Integer,
+            # "runtime": Integer,
+            # "total_length": Integer,
+            # "num_tracks": Integer,
+        }
+
         conn = sqlite3.connect(os.path.join(BASEPATH, "merged_bandcamp_catalog.db"))
         self.merged_df.to_pandas().to_sql(
-            "merged_data", conn, if_exists="replace", index=False
+            "merged_data",
+            conn,
+            if_exists="replace",
+            index=False,
+            dtype=dtype_mapping,
         )
         conn.close()
 
@@ -73,7 +185,10 @@ class CatalogMerger:
         self.load_dataframes()
         self.clean_up_bandcamp_albums()
         self.clean_up_catalog_numbers()
+        self.clean_up_catalog_columns()
         self.merge_dataframes()
+        self.cleanup_columns()
+        self.add_unique_release_id()
         self.save_merged_dataframe()
         self.convert_to_sqlite()
         self.log_summary()

@@ -9,7 +9,7 @@ import mechanicalsoup
 from bs4 import BeautifulSoup
 from log import get_logger
 from models.album import Album, Track, CSV_SEPARATOR, LIST_SEPARATOR
-from ISRCGetter import ISRCGetter
+from isrc_getter import ISRCGetter
 
 logger = get_logger(__name__)
 ALBUM_LABEL = "Passed Recordings"
