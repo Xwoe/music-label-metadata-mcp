@@ -84,11 +84,12 @@ class CatalogMerger:
             cassette_col = COLUMN_DICT[ReleaseType.CASSETTE]
             cd_col = COLUMN_DICT[ReleaseType.CD]
             lp_col = COLUMN_DICT[ReleaseType.LP]
+            # arch_col = COLUMN_DICT[ReleaseType.ARCHIVE]
 
             if physical_id is None:
                 return {cassette_col: None, cd_col: None, lp_col: None}
 
-            cassettes, cds, lps = [], [], []
+            cassettes, cds, lps, arch = [], [], [], []
             for item in physical_id.split(" / "):
                 if item.startswith("prc0"):
                     cassettes.append(item)
@@ -96,11 +97,14 @@ class CatalogMerger:
                     cds.append(item)
                 elif item.startswith("prlp"):
                     lps.append(item)
+                # elif item.startswith("PR-ARCH-"):
+                #     arch.append(item)
 
             return {
                 cassette_col: " / ".join(cassettes) if cassettes else None,
                 cd_col: " / ".join(cds) if cds else None,
                 lp_col: " / ".join(lps) if lps else None,
+                # arch_col: " / ".join(arch) if arch else None,
             }
 
         def categorize_digital_id(digital_id):
@@ -113,7 +117,7 @@ class CatalogMerger:
             return None
 
         # Rename Archive ID column
-        self.catalog_df = self.catalog_df.rename({"Archive ID": "archive_id"})
+        self.catalog_df = self.catalog_df.rename({"Archive ID": "archive_catalog_id"})
 
         # Create missing columns with null values
         for col_name in COLUMN_DICT.values():
@@ -128,6 +132,7 @@ class CatalogMerger:
             COLUMN_DICT[ReleaseType.CASSETTE],
             COLUMN_DICT[ReleaseType.CD],
             COLUMN_DICT[ReleaseType.LP],
+            # COLUMN_DICT[ReleaseType.ARCHIVE],
         ]:
             self.catalog_df = self.catalog_df.with_columns(
                 pl.col("Historical Physical ID")
@@ -145,10 +150,38 @@ class CatalogMerger:
             )
             .alias(COLUMN_DICT[ReleaseType.DIGITAL])
         )
+        self.catalog_df = self.catalog_df.with_columns(
+            pl.when(
+                pl.col("digital_catalog_id").str.starts_with(ReleaseType.ARCHIVE.value)
+            )
+            .then(pl.lit(None))
+            .otherwise(pl.col("digital_catalog_id"))
+            .alias("digital_catalog_id")
+        )
+
+        # rename the column `catalog_id` to `legacy_catalog_id`
+        self.catalog_df = self.catalog_df.rename({"catalog_id": "legacy_catalog_id"})
+
+    def rename_catalog_ids(self):
+        self.catalog_df = self.catalog_df.with_columns(
+            pl.col(COLUMN_DICT[ReleaseType.CASSETTE])
+            .str.replace_all("prc", ReleaseType.CASSETTE)
+            .alias(COLUMN_DICT[ReleaseType.CASSETTE])
+        )
+        self.catalog_df = self.catalog_df.with_columns(
+            pl.col(COLUMN_DICT[ReleaseType.LP])
+            .str.replace_all("prlp", ReleaseType.LP)
+            .alias(COLUMN_DICT[ReleaseType.LP])
+        )
+        self.catalog_df = self.catalog_df.with_columns(
+            pl.col(COLUMN_DICT[ReleaseType.CD])
+            .str.replace_all("prcd", ReleaseType.CD)
+            .alias(COLUMN_DICT[ReleaseType.CD])
+        )
 
     def drop_columns(self):
         colunns_to_drop = ["catalog_number", "Historical Physical ID", "Catalog ID"]
-        self.merged_df = self.merged_df.drop(columns=colunns_to_drop)
+        self.merged_df = self.merged_df.drop(colunns_to_drop)
 
     def save_merged_dataframe(self):
         self.merged_df.write_csv(self.merged_filepath, separator=";")
@@ -173,7 +206,7 @@ class CatalogMerger:
         conn.close()
 
     def log_summary(self):
-        missing_catalog = self.merged_df.filter(pl.col("catalog_id").is_null())
+        missing_catalog = self.merged_df.filter(pl.col("legacy_catalog_id").is_null())
         unique_missing = missing_catalog.select(
             ["album_artists", "album_title"]
         ).unique()
@@ -186,9 +219,11 @@ class CatalogMerger:
         self.clean_up_bandcamp_albums()
         self.clean_up_catalog_numbers()
         self.clean_up_catalog_columns()
+        self.rename_catalog_ids()
         self.merge_dataframes()
         self.cleanup_columns()
         self.add_unique_release_id()
+        self.drop_columns()
         self.save_merged_dataframe()
         self.convert_to_sqlite()
         self.log_summary()
