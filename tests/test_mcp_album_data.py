@@ -60,8 +60,14 @@ async def test_fetch_release_by_name():
             assert "artist_name" in content_data
             assert "release_title" in content_data
             assert "label" in content_data
-            assert "release_id" in content_data
+            assert "mc_catalog_id" in content_data
+            assert "cd_catalog_id" in content_data
+            assert "lp_catalog_id" in content_data
+            assert "digital_catalog_id" in content_data
+            assert "archive_catalog_id" in content_data
+            assert "tracks" in content_data
             assert "release_date" in content_data
+            assert len(content_data["tracks"]) > 0
 
 
 @pytest.mark.asyncio

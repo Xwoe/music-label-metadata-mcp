@@ -204,8 +204,9 @@ class CatalogMerger:
             dtype=dtype_mapping,
         )
         cursor = conn.cursor()
+
+        self.normalize_database(conn)
         self.create_url_tables(conn)
-        self.create_tracks_table(conn)
 
         conn.close()
 
@@ -229,18 +230,33 @@ class CatalogMerger:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     {catalog_id_col} TEXT,
                     url_record TEXT,
-                    FOREIGN KEY ({catalog_id_col}) REFERENCES merged_data({catalog_id_col})
+                    FOREIGN KEY ({catalog_id_col}) REFERENCES releases({catalog_id_col})
                     )
                 """
                 )
 
         conn.commit()
 
-    def create_tracks_table(self, conn):
+    def normalize_database(self, conn):
         cursor = conn.cursor()
+
+        # Create releases table first
+        cursor.execute("DROP TABLE IF EXISTS releases")
         cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS tracks (
+            CREATE TABLE releases AS
+            SELECT DISTINCT release_id, album_artists, album_title, label,
+                    total_length, num_tracks, tags, release_date, type,
+                    mc_catalog_id, cd_catalog_id, lp_catalog_id,
+                    digital_catalog_id, archive_catalog_id, legacy_catalog_id
+            FROM merged_data
+            """
+        )
+
+        cursor.execute("DROP TABLE IF EXISTS tracks")
+        cursor.execute(
+            """
+            CREATE TABLE tracks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 release_id TEXT,
                 track_number INTEGER,
@@ -248,7 +264,7 @@ class CatalogMerger:
                 track_title TEXT,
                 runtime INTEGER,
                 isrc TEXT,
-                FOREIGN KEY (release_id) REFERENCES merged_data(release_id)
+                FOREIGN KEY (release_id) REFERENCES releases(release_id)
             )
             """
         )
@@ -263,24 +279,9 @@ class CatalogMerger:
             """
         )
 
-        # Remove track-specific columns from merged_data and keep distinct releases
-        # Create a temporary table for distinct releases
-        cursor.execute(
-            """
-            CREATE TABLE merged_data_temp AS
-            SELECT DISTINCT release_id, album_artists, album_title, label,
-                    total_length, num_tracks, tags, release_date, type,
-                    mc_catalog_id, cd_catalog_id, lp_catalog_id,
-                    digital_catalog_id, archive_catalog_id, legacy_catalog_id
-            FROM merged_data
-            """
-        )
-
         # Drop the original table
         cursor.execute("DROP TABLE merged_data")
 
-        # Rename temp table to original
-        cursor.execute("ALTER TABLE merged_data_temp RENAME TO merged_data")
         conn.commit()
 
     def log_summary(self):

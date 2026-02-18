@@ -46,26 +46,19 @@ async def fetch_release_by_name(artist_name: str, release_title: str) -> dict:
         cursor = conn.cursor()
         # Query the database for the specific release
         cursor.execute(
-            "SELECT album_artists, album_title, label, release_id, release_date FROM merged_data WHERE album_artists = ? AND album_title = ?",
+            "SELECT album_artists, album_title, label, release_id, release_date FROM releases WHERE album_artists = ? AND album_title = ?",
             (artist_name, release_title),
         )
         row = cursor.fetchone()
 
     if not row:
         return {"error": "Release not found"}
-
-    # Format the data into a clean structure for the LLM
-    return {
-        "artist_name": row["album_artists"],
-        "release_title": row["album_title"],
-        "label": row["label"],
-        "release_id": row["release_id"],
-        "release_date": row["release_date"],
-    }
+    release_id = row["release_id"]
+    return await collect_release_data(release_id)  # Fetch detailed release data
 
 
 @mcp.tool()
-async def prepare_release_for_musicbrainz(release_id: str) -> dict:
+async def collect_release_data(release_id: str) -> dict:
     """
     Fetches a specific release from our DB and formats it for MusicBrainz submission.
     Returns a JSON object the browser tool can use to fill forms.
@@ -74,10 +67,17 @@ async def prepare_release_for_musicbrainz(release_id: str) -> dict:
         cursor = conn.cursor()
         # Query your specific release
         cursor.execute(
-            "SELECT album_artists, album_title, label, catalog_id, release_date FROM releases WHERE id = ?",
+            """SELECT album_artists, album_title, label, mc_catalog_id, cd_catalog_id, archive_catalog_id,
+                lp_catalog_id, digital_catalog_id, archive_catalog_id, release_date FROM releases WHERE release_id = ?""",
             (release_id,),
         )
         row = cursor.fetchone()
+
+        cursor.execute(
+            "SELECT track_number, artists, track_title, runtime, isrc FROM tracks WHERE release_id = ? ORDER BY track_number",
+            (release_id,),
+        )
+        tracks = cursor.fetchall()
 
     if not row:
         return {"error": "Release not found"}
@@ -87,11 +87,24 @@ async def prepare_release_for_musicbrainz(release_id: str) -> dict:
         "artist_name": row["album_artists"],
         "release_title": row["album_title"],
         "label": row["label"],
-        "catalog_number": row["catalog_id"],
+        "mc_catalog_id": row["mc_catalog_id"],
+        "cd_catalog_id": row["cd_catalog_id"],
+        "lp_catalog_id": row["lp_catalog_id"],
+        "digital_catalog_id": row["digital_catalog_id"],
         "release_date": row["release_date"],
         "archive_catalog_id": row["archive_catalog_id"],
         "digital_catalog_id": row["digital_catalog_id"],
-        "target_url": "https://musicbrainz.org/release/add",
+        "release_date": row["release_date"],
+        "tracks": [
+            {
+                "track_number": track["track_number"],
+                "artists": track["artists"],
+                "track_title": track["track_title"],
+                "runtime": track["runtime"],
+                "isrc": track["isrc"],
+            }
+            for track in tracks
+        ],
     }
 
 
@@ -103,7 +116,7 @@ async def list_all_releases() -> list:
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT DISTINCT album_artists, album_title, label, catalog_id, release_date FROM merged_data"
+            "SELECT DISTINCT album_artists, album_title, label, mc_catalog_id, cd_catalog_id, lp_catalog_id, digital_catalog_id, archive_catalog_id, release_date FROM releases"
         )
         rows = cursor.fetchall()
 
@@ -111,8 +124,12 @@ async def list_all_releases() -> list:
         {
             "artist_name": row["album_artists"],
             "release_title": row["album_title"],
-            "label": ALBUM_LABEL,
-            "catalog_number": row["catalog_id"],
+            "label": row["label"],
+            "mc_catalog_id": row["mc_catalog_id"],
+            "cd_catalog_id": row["cd_catalog_id"],
+            "lp_catalog_id": row["lp_catalog_id"],
+            "digital_catalog_id": row["digital_catalog_id"],
+            "archive_catalog_id": row["archive_catalog_id"],
             "release_date": row["release_date"],
         }
         for row in rows
@@ -137,7 +154,7 @@ async def get_new_catalog_id(release_type: ReleaseType) -> str:
         if not column_name:
             return "Invalid release type"
         cursor.execute(
-            f"SELECT MAX({column_name}) FROM merged_data WHERE {column_name} LIKE ?",
+            f"SELECT MAX({column_name}) FROM releases WHERE {column_name} LIKE ?",
             (f"{release_type.value}%",),
         )
         max_id = cursor.fetchone()[0]
