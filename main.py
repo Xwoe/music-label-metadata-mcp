@@ -89,6 +89,8 @@ async def prepare_release_for_musicbrainz(release_id: str) -> dict:
         "label": row["label"],
         "catalog_number": row["catalog_id"],
         "release_date": row["release_date"],
+        "archive_catalog_id": row["archive_catalog_id"],
+        "digital_catalog_id": row["digital_catalog_id"],
         "target_url": "https://musicbrainz.org/release/add",
     }
 
