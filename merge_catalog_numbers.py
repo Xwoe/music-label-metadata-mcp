@@ -203,7 +203,39 @@ class CatalogMerger:
             index=False,
             dtype=dtype_mapping,
         )
+        cursor = conn.cursor()
+        self.create_url_tables(conn)
+
         conn.close()
+
+    def create_url_tables(self, conn):
+        cursor = conn.cursor()
+        sources = ["discogs", "musicbrainz", "cddb"]
+        link_types = [
+            ("mc", "mc_catalog_id"),
+            ("cd", "cd_catalog_id"),
+            ("lp", "lp_catalog_id"),
+            ("digital", "digital_catalog_id"),
+            ("archive", "archive_catalog_id"),
+        ]
+
+        for source in sources:
+            for link_type, catalog_id_col in link_types:
+                table_name = f"{source}_{link_type}_links"
+                cursor.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {table_name} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    {catalog_id_col} TEXT,
+                    url_record TEXT,
+                    FOREIGN KEY ({catalog_id_col}) REFERENCES merged_data({catalog_id_col})
+                    )
+                """
+                )
+
+        conn.commit()
+
+        conn.commit()
 
     def log_summary(self):
         missing_catalog = self.merged_df.filter(pl.col("legacy_catalog_id").is_null())
