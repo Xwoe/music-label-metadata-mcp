@@ -7,6 +7,7 @@ import sqlite3
 from contextlib import contextmanager
 from mcp.server.fastmcp import FastMCP
 from models.names_prefixes import ALBUM_LABEL, ReleaseType, COLUMN_DICT
+from fill_form import MusicBrainzFiller
 
 # Initialize FastMCP server
 mcp = FastMCP("MusicLabelDataFiller")
@@ -42,19 +43,42 @@ async def fetch_release_by_name(artist_name: str, release_title: str) -> dict:
     Fetches a release from the SQLite database based on artist name and release title.
     Returns a JSON object with the release details or an error message if not found.
     """
+    # with get_db_connection() as conn:
+    #     cursor = conn.cursor()
+    #     # Query the database for the specific release
+    #     cursor.execute(
+    #         "SELECT album_artists, album_title, label, release_id, release_date FROM releases WHERE album_artists = ? AND album_title = ?",
+    #         (artist_name, release_title),
+    #     )
+    #     row = cursor.fetchone()
+
+    # if not row:
+    #     return {"error": "Release not found"}
+    # release_id = row["release_id"]
+    release_id = await get_release_id_by_name(
+        artist_name, release_title
+    )  # Fetch the release_id first
+    return await collect_release_data(release_id)  # Fetch detailed release data
+
+
+@mcp.tool()
+async def get_release_id_by_name(artist_name: str, release_title: str) -> dict:
+    """
+    Fetches the release_id for a given artist name and release title.
+    Returns a JSON object with the release_id or an error message if not found.
+    """
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        # Query the database for the specific release
         cursor.execute(
-            "SELECT album_artists, album_title, label, release_id, release_date FROM releases WHERE album_artists = ? AND album_title = ?",
+            "SELECT release_id FROM releases WHERE album_artists = ? AND album_title = ?",
             (artist_name, release_title),
         )
         row = cursor.fetchone()
 
     if not row:
         return {"error": "Release not found"}
-    release_id = row["release_id"]
-    return await collect_release_data(release_id)  # Fetch detailed release data
+
+    return {"release_id": row["release_id"]}
 
 
 @mcp.tool()
@@ -165,6 +189,26 @@ async def get_new_catalog_id(release_type: ReleaseType) -> str:
     else:
         new_id_num = int(max_id.split("-")[-1]) + 1
         return f"{release_type.value}{new_id_num:03d}"
+
+
+@mcp.tool()
+async def fill_musicbrainz_form(release_id: str) -> str:
+    """
+    Opens a browser window and attempts to prefill the MusicBrainz 'Add Release' form
+    using data for the given release_id.
+    """
+    # 1. Get the data
+    data = await collect_release_data(release_id)
+    if "error" in data:
+        return f"Error: {data['error']}"
+
+    # 2. Launch the browser filler
+    try:
+        filler = MusicBrainzFiller()
+        filler.fill_release(data)
+        return "Browser opened and form filled (check the window)."
+    except Exception as e:
+        return f"Failed to fill form: {str(e)}"
 
 
 if __name__ == "__main__":
