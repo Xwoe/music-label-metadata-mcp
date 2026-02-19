@@ -43,18 +43,6 @@ async def fetch_release_by_name(artist_name: str, release_title: str) -> dict:
     Fetches a release from the SQLite database based on artist name and release title.
     Returns a JSON object with the release details or an error message if not found.
     """
-    # with get_db_connection() as conn:
-    #     cursor = conn.cursor()
-    #     # Query the database for the specific release
-    #     cursor.execute(
-    #         "SELECT album_artists, album_title, label, release_id, release_date FROM releases WHERE album_artists = ? AND album_title = ?",
-    #         (artist_name, release_title),
-    #     )
-    #     row = cursor.fetchone()
-
-    # if not row:
-    #     return {"error": "Release not found"}
-    # release_id = row["release_id"]
     release_id = await get_release_id_by_name(
         artist_name, release_title
     )  # Fetch the release_id first
@@ -70,7 +58,7 @@ async def get_release_id_by_name(artist_name: str, release_title: str) -> dict:
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT release_id FROM releases WHERE album_artists = ? AND album_title = ?",
+            "SELECT release_id FROM releases WHERE LOWER(album_artists) = LOWER(?) AND LOWER(album_title) = LOWER(?)",
             (artist_name, release_title),
         )
         row = cursor.fetchone()
@@ -92,7 +80,7 @@ async def collect_release_data(release_id: str) -> dict:
         # Query your specific release
         cursor.execute(
             """SELECT album_artists, album_title, label, mc_catalog_id, cd_catalog_id, archive_catalog_id,
-                lp_catalog_id, digital_catalog_id, archive_catalog_id, release_date, type FROM releases WHERE release_id = ?""",
+                lp_catalog_id, digital_catalog_id, archive_catalog_id, release_date, type, bandcamp_url FROM releases WHERE release_id = ?""",
             (release_id,),
         )
         row = cursor.fetchone()
@@ -120,6 +108,7 @@ async def collect_release_data(release_id: str) -> dict:
         "digital_catalog_id": row["digital_catalog_id"],
         "release_date": row["release_date"],
         "type": row["type"],
+        "bandcamp_url": row["bandcamp_url"],
         "tracks": [
             {
                 "track_number": track["track_number"],
@@ -141,7 +130,7 @@ async def list_all_releases() -> list:
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT DISTINCT album_artists, album_title, label, mc_catalog_id, cd_catalog_id, lp_catalog_id, digital_catalog_id, archive_catalog_id, release_date FROM releases"
+            "SELECT DISTINCT album_artists, album_title, label, mc_catalog_id, cd_catalog_id, lp_catalog_id, digital_catalog_id, archive_catalog_id, release_date, bandcamp_url FROM releases"
         )
         rows = cursor.fetchall()
 
@@ -156,6 +145,7 @@ async def list_all_releases() -> list:
             "digital_catalog_id": row["digital_catalog_id"],
             "archive_catalog_id": row["archive_catalog_id"],
             "release_date": row["release_date"],
+            "bandcamp_url": row["bandcamp_url"],
         }
         for row in rows
     ]
@@ -193,10 +183,18 @@ async def get_new_catalog_id(release_type: ReleaseType) -> str:
 
 
 @mcp.tool()
-async def fill_musicbrainz_form(release_id: str) -> str:
+async def fill_musicbrainz_form(
+    release_id: str, medium: ReleaseType = ReleaseType.DIGITAL
+) -> str:
     """
     Opens a browser window and attempts to prefill the MusicBrainz 'Add Release' form
-    using data for the given release_id.
+    using data for the given release_id. In the parameter `medium`, you can specify the release type
+    (digital, cassette, LP, CD, archive) you want to add to the musicbrainz database.
+    This will determine which catalog ID is generated and filled in the form.
+    If the user didn't specify, which release type they want to add and there are multiple
+    catalog IDs available for the release, ask the user, which one to use.
+    Since there is sometimes an issue with filling in the tracklist, print the tracklist to the user
+    into the chat, so they can easily copy-paste it into the form if needed.
     """
     # 1. Get the data
     data = await collect_release_data(release_id)
@@ -206,10 +204,33 @@ async def fill_musicbrainz_form(release_id: str) -> str:
     # 2. Launch the browser filler
     try:
         filler = MusicBrainzFiller()
-        filler.fill_release(data)
-        return "Browser opened and form filled (check the window)."
+        track_list = filler.fill_release(data, medium)
+        return (
+            "Browser opened and form filled (check the window). Tracklist:\n"
+            + track_list
+        )
     except Exception as e:
         return f"Failed to fill form: {str(e)}"
+
+
+@mcp.tool()
+async def add_release_to_musicbrainz_by_name(
+    artist_name: str, release_title: str, medium: ReleaseType = ReleaseType.DIGITAL
+) -> str:
+    """
+    Combines the functionality of fetching a release by name and filling the MusicBrainz form.
+    This is a convenience tool that allows users to directly add a release to MusicBrainz by
+    providing the artist name and release title.
+    """
+    # 1. Fetch the release ID
+    release_id_result = await get_release_id_by_name(artist_name, release_title)
+    if "error" in release_id_result:
+        return f"Error: {release_id_result['error']}"
+
+    release_id = release_id_result
+
+    # 2. Fill the MusicBrainz form using the fetched release ID
+    return await fill_musicbrainz_form(release_id, medium)
 
 
 if __name__ == "__main__":

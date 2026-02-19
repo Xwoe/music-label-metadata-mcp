@@ -50,6 +50,12 @@ class CatalogMerger:
                 pl.col("num_tracks").cast(pl.Int32),
             ]
         )
+        self.merged_df = self.merged_df.with_columns(
+            pl.when(pl.col("album_artists") == "Various")
+            .then(pl.lit("Various Artists"))
+            .otherwise(pl.col("album_artists"))
+            .alias("album_artists")
+        )
         self.merged_df = self.merged_df.drop_nulls(
             subset=["album_artists", "album_title"]
         )
@@ -244,7 +250,7 @@ class CatalogMerger:
             SELECT DISTINCT release_id, album_artists, album_title, label,
                     total_length, num_tracks, tags, release_date, type,
                     mc_catalog_id, cd_catalog_id, lp_catalog_id,
-                    digital_catalog_id, archive_catalog_id, legacy_catalog_id
+                    digital_catalog_id, archive_catalog_id, legacy_catalog_id, bandcamp_url
             FROM merged_data
             """
         )

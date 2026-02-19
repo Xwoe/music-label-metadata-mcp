@@ -5,6 +5,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
+from models.names_prefixes import ReleaseType, COLUMN_DICT
 
 
 class MusicBrainzFiller:
@@ -48,20 +49,24 @@ class MusicBrainzFiller:
         except Exception as e:
             print(f"Login failed: {e}")
 
-    def fill_release(self, release_data: dict):
+    def fill_release(
+        self, release_data: dict, medium: ReleaseType = ReleaseType.DIGITAL
+    ):
         self.login()
 
         # Navigate to the Add Release page
         self.driver.get("https://musicbrainz.org/release/add")
 
         try:
-            # 1. Release information tab
+            # 1. Tracklist tab
+            track_list = self.fill_tracks(release_data)
+            # 2. Release information tab
             self.fill_artist_title(release_data)
             self.fill_type(release_data)
-            self.fill_release_event(release_data)
-            self.fill_tracks(release_data)
+            self.fill_release_event(release_data, medium)
 
             print("Form pre-filled.")
+            return track_list
 
         except Exception as e:
             print(f"Error filling form: {e}")
@@ -91,7 +96,9 @@ class MusicBrainzFiller:
             except Exception as e:
                 print(f"Could not select release type '{release_type}': {e}")
 
-    def fill_release_event(self, release_data):
+    def fill_release_event(
+        self, release_data, medium: ReleaseType = ReleaseType.DIGITAL
+    ):
         # Handle Release Date
         date_str = release_data.get("release_date", "")
         if date_str:
@@ -124,54 +131,125 @@ class MusicBrainzFiller:
                 print(f"Error filling label: {e}")
 
         # Handle Catalog Number (checking various keys that might exist)
-        cat_no = (
-            release_data.get("mc_catalog_id")
-            or release_data.get("cd_catalog_id")
-            or release_data.get("lp_catalog_id")
-            or release_data.get("digital_catalog_id")
-        )
+        self.fill_catalog_id(release_data, medium)
+
+        # Handle Bandcamp URL
+        bandcamp_url = release_data.get("bandcamp_url", "")
+        if bandcamp_url:
+            try:
+                external_link_input = self.driver.find_element(
+                    By.CSS_SELECTOR, "input.value.with-button[type='url']"
+                )
+                external_link_input.send_keys(bandcamp_url)
+            except Exception as e:
+                print(f"Error filling Bandcamp URL: {e}")
+
+        # Handle Barcode (Click "This release does not have a barcode")
+        try:
+            # Check if the checkbox is already checked (isSelected might not work on the input if hidden/custom,
+            # but usually works on standard checkbox inputs).
+            # The label implies it's a standard input.
+            no_barcode_checkbox = self.driver.find_element(By.ID, "no-barcode")
+            if not no_barcode_checkbox.is_selected():
+                no_barcode_checkbox.click()
+        except Exception as e:
+            # If element not found or interaction failed
+            pass  # print(f"Error clicking no-barcode checkbox: {e}")
+
+            print("Form pre-filled.")
+
+        except Exception as e:
+            print(f"Error filling form: {e}")
+
+    def fill_catalog_id(self, release_data, medium):
+
+        if medium == ReleaseType.CASSETTE:
+            cat_no = release_data.get("mc_catalog_id")
+        elif medium == ReleaseType.CD:
+            cat_no = release_data.get("cd_catalog_id")
+        elif medium == ReleaseType.LP:
+            cat_no = release_data.get("lp_catalog_id")
+        elif medium == ReleaseType.DIGITAL:
+            cat_no = release_data.get("digital_catalog_id")
+        else:
+            cat_no = (
+                release_data.get("mc_catalog_id")
+                or release_data.get("cd_catalog_id")
+                or release_data.get("lp_catalog_id")
+                or release_data.get("digital_catalog_id")
+            )
         if cat_no:
             try:
                 self.driver.find_element(By.ID, "catno-0").send_keys(cat_no)
             except Exception as e:
                 print(f"Error filling catalog number: {e}")
 
-        # Handle Barcode (Click "This release does not have a barcode")
+    def fill_tracks(self, release_data: dict):
+        tracklist_str = ""
         try:
-            no_barcode_checkbox = self.driver.find_element(By.ID, "no-barcode")
-            if not no_barcode_checkbox.isSelected():
-                no_barcode_checkbox.click()
-        except Exception as e:
-            print(f"Error clicking no-barcode checkbox: {e}")
+            tracklist_str = self.get_tracklist_str(release_data)
+            if not tracklist_str:
+                print("No track data available to fill.")
+                return
+            # Click Tracklist tab
+            # The structure suggests jQuery UI tabs
+            tracklist_tab = self.wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href='#tracklist']"))
+            )
+            tracklist_tab.click()
 
-    def get_tracklist(self, tracks):
-        formatted_tracks = []
-        for track in tracks:
-            track_num = track.get("track_number", "")
-            title = track.get("track_title", "")
-            artists = track.get("artists", "")
-            runtime = track.get("runtime", 0)
-            # Convert runtime from seconds to mm:ss format
-            minutes = runtime // 60
-            seconds = runtime % 60
-            time_str = f"{minutes}:{seconds:02d}"
-            formatted_track = f"{track_num}. {title} - {artists} ({time_str})"
-            formatted_tracks.append(formatted_track)
+            # Wait for textarea inside the dialog
+            # The user mentioned the widget has class "ui-dialog"
+            textarea = self.wait.until(
+                EC.visibility_of_element_located(
+                    (By.CSS_SELECTOR, "div.ui-dialog textarea.tracklist")
+                )
+            )
 
-        return "\n".join(formatted_tracks)
+            # Clear and paste
+            textarea.clear()
+            textarea.send_keys(tracklist_str)
+            print("Tracklist filled.")
 
-    def fill_tracks(self, release_data):
-        tracks = release_data.get("tracks", [])
-        if not tracks:
-            return
+            # Click "Add medium"
+            add_medium_btn = self.wait.until(
+                EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, "button[data-click='addMedium']")
+                )
+            )
+            add_medium_btn.click()
 
-        tracklist_str = self.get_tracklist(tracks)
-        try:
-            
-            tracklist_input = self.driver.find_element(By.ID, "tracklist")
-            tracklist_input.send_keys(tracklist_str)
+            # Navigate back to Release Information tab
+            release_info_tab = self.wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href='#information']"))
+            )
+            release_info_tab.click()
+            return tracklist_str
+
         except Exception as e:
             print(f"Error filling tracklist: {e}")
+            return tracklist_str
+
+    def get_tracklist_str(self, release_data: dict):
+        # Format tracklist string from release_date (which seems to contain tracks in other parts of the code)
+        # or usage logic needs to pass it.
+        # Assuming release_data has a 'tracks' list based on previous context.
+        tracks = release_data.get("tracks", [])
+        tracklist_str = ""
+        for t in tracks:
+            # Format: 1. Title - Artist (Time) or similar, depending on what the parser accepts.
+            # MusicBrainz track parser usually accepts: "1. Title - Artist (3:45)"
+            # Using a simple format: "Track Number. Track Title - Artist (Runtime)""
+            # Format runtime
+            duration = ""
+            rt = t.get("runtime", 0)
+            if rt and rt > 0:
+                m, s = divmod(rt, 60)
+                duration = f" ({m}:{s:02d})"
+
+            track_str = f"{t.get('track_number')}. {t.get('track_title')} - {t.get('artists')}{duration}"
+            tracklist_str += track_str + "\n"
+        return tracklist_str.strip()
 
     def close(self):
         # self.driver.quit()
@@ -192,6 +270,7 @@ if __name__ == "__main__":
         "release_date": "2023-10-06T00:00:00",
         "archive_catalog_id": None,
         "type": "Album",
+        "bandcamp_url": "https://exitchamber.bandcamp.com/album/phased-returns",
         "tracks": [
             {
                 "track_number": 1,
@@ -231,4 +310,6 @@ if __name__ == "__main__":
         ],
     }
 
-    filler.fill_release(test_data)
+    tracklist = filler.fill_release(test_data)
+    print("Tracklist string to fill in form:")
+    print(tracklist)

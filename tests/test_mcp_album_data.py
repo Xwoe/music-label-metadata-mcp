@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import json
+import os
 import pytest
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
@@ -161,3 +162,65 @@ async def test_get_new_archive_catalog_id():
             logger.debug(
                 f"get_new_catalog_id result.content[0].text = {result.content[0].text!r}"
             )
+
+
+@pytest.mark.asyncio
+async def test_add_cd_to_musicbrainz():
+    async with AsyncExitStack() as stack:
+        server_params = StdioServerParameters(
+            command=sys.executable,
+            args=[SERVER_PATH],
+            env={
+                "MUSICBRAINZ_USERNAME": os.environ.get("MUSICBRAINZ_USERNAME"),
+                "MUSICBRAINZ_PASSWORD": os.environ.get("MUSICBRAINZ_PASSWORD"),
+            },
+        )
+        read, write = await stack.enter_async_context(stdio_client(server_params))
+        client = ClientSession(read, write)
+        async with client:
+            await client.initialize()
+            result = await client.call_tool(
+                name="get_release_id_by_name",
+                arguments={
+                    "artist_name": "Take Me There",
+                    "release_title": "Chronic Lullabies",
+                },
+            )
+            result = await client.call_tool(
+                name="fill_musicbrainz_form",
+                arguments={
+                    "release_id": result.content[0].text,
+                    "medium": ReleaseType.CD,
+                },
+            )
+            assert hasattr(result, "content")
+            assert len(result.content) > 0
+            assert result.isError is False
+
+
+@pytest.mark.asyncio
+async def test_add_release_to_musicbrainz_by_name():
+    async with AsyncExitStack() as stack:
+        server_params = StdioServerParameters(
+            command=sys.executable,
+            args=[SERVER_PATH],
+            env={
+                "MUSICBRAINZ_USERNAME": os.environ.get("MUSICBRAINZ_USERNAME"),
+                "MUSICBRAINZ_PASSWORD": os.environ.get("MUSICBRAINZ_PASSWORD"),
+            },
+        )
+        read, write = await stack.enter_async_context(stdio_client(server_params))
+        client = ClientSession(read, write)
+        async with client:
+            await client.initialize()
+            result = await client.call_tool(
+                name="add_release_to_musicbrainz_by_name",
+                arguments={
+                    "artist_name": "Cavern Cult",
+                    "release_title": "Approach",
+                    "medium": ReleaseType.DIGITAL,
+                },
+            )
+            assert hasattr(result, "content")
+            assert len(result.content) > 0
+            assert result.isError is False
