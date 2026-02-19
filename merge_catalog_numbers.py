@@ -41,6 +41,7 @@ class CatalogMerger:
         )
 
     def cleanup_columns(self):
+        self.merged_df = self.merged_df.rename({"Type": "type"})
         self.merged_df = self.merged_df.with_columns(
             [
                 pl.col("track_number").cast(pl.Int32),

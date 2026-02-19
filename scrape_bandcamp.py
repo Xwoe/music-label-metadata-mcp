@@ -77,6 +77,7 @@ class BandcampScraper:
 
     def parse_album(self, album_url: str):
         album = Album()
+        album.bandcamp_url = album_url
         browser = mechanicalsoup.StatefulBrowser()
         browser.open(album_url)
         soup = browser.page

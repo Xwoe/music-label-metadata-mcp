@@ -67,6 +67,7 @@ async def test_fetch_release_by_name():
             assert "archive_catalog_id" in content_data
             assert "tracks" in content_data
             assert "release_date" in content_data
+            assert "type" in content_data
             assert len(content_data["tracks"]) > 0
 
 

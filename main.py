@@ -92,7 +92,7 @@ async def collect_release_data(release_id: str) -> dict:
         # Query your specific release
         cursor.execute(
             """SELECT album_artists, album_title, label, mc_catalog_id, cd_catalog_id, archive_catalog_id,
-                lp_catalog_id, digital_catalog_id, archive_catalog_id, release_date FROM releases WHERE release_id = ?""",
+                lp_catalog_id, digital_catalog_id, archive_catalog_id, release_date, type FROM releases WHERE release_id = ?""",
             (release_id,),
         )
         row = cursor.fetchone()
@@ -119,6 +119,7 @@ async def collect_release_data(release_id: str) -> dict:
         "archive_catalog_id": row["archive_catalog_id"],
         "digital_catalog_id": row["digital_catalog_id"],
         "release_date": row["release_date"],
+        "type": row["type"],
         "tracks": [
             {
                 "track_number": track["track_number"],
