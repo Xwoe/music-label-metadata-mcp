@@ -78,7 +78,7 @@ async def get_release_id_by_name(artist_name: str, release_title: str) -> dict:
     if not row:
         return {"error": "Release not found"}
 
-    return {"release_id": row["release_id"]}
+    return row["release_id"]
 
 
 @mcp.tool()

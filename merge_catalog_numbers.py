@@ -70,7 +70,6 @@ class CatalogMerger:
         self.catalog_df = self.catalog_df.with_columns(
             pl.coalesce(
                 [
-                    pl.col("Historical Physical ID"),
                     pl.col("Archive ID"),
                     pl.col("Catalog ID"),
                 ]
@@ -84,12 +83,11 @@ class CatalogMerger:
             cassette_col = COLUMN_DICT[ReleaseType.CASSETTE]
             cd_col = COLUMN_DICT[ReleaseType.CD]
             lp_col = COLUMN_DICT[ReleaseType.LP]
-            # arch_col = COLUMN_DICT[ReleaseType.ARCHIVE]
 
             if physical_id is None:
                 return {cassette_col: None, cd_col: None, lp_col: None}
 
-            cassettes, cds, lps, arch = [], [], [], []
+            cassettes, cds, lps = [], [], []
             for item in physical_id.split(" / "):
                 if item.startswith("prc0"):
                     cassettes.append(item)
@@ -97,14 +95,11 @@ class CatalogMerger:
                     cds.append(item)
                 elif item.startswith("prlp"):
                     lps.append(item)
-                # elif item.startswith("PR-ARCH-"):
-                #     arch.append(item)
 
             return {
                 cassette_col: " / ".join(cassettes) if cassettes else None,
                 cd_col: " / ".join(cds) if cds else None,
                 lp_col: " / ".join(lps) if lps else None,
-                # arch_col: " / ".join(arch) if arch else None,
             }
 
         def categorize_digital_id(digital_id):

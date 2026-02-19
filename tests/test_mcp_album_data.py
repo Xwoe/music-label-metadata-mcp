@@ -47,8 +47,8 @@ async def test_fetch_release_by_name():
             result = await client.call_tool(
                 name="fetch_release_by_name",
                 arguments={
-                    "artist_name": "Christian Schwöbel",
-                    "release_title": "Dystopian Pulse",
+                    "artist_name": "Exit Chamber",
+                    "release_title": "Phased Returns",
                 },
             )
             assert hasattr(result, "content")
