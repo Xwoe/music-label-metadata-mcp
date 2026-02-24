@@ -50,6 +50,7 @@ class Album(BaseModel):
     total_length: int = 0
     num_tracks: int = 0
     catalog_number: str = ""
+    bandcamp_url: str = ""
     tags: List[str] = []
     tracks: List[Track] = []
 
@@ -73,6 +74,7 @@ class Album(BaseModel):
                     "num_tracks",
                     "release_date",
                     "catalog_number",
+                    "bandcamp_url",
                     "tags",
                 ]
             )
@@ -98,6 +100,7 @@ class Album(BaseModel):
                     self.num_tracks,
                     self.release_date.isoformat(),
                     self.catalog_number,
+                    self.bandcamp_url,
                     LIST_SEPARATOR.join(self.tags),
                 ]
             )
