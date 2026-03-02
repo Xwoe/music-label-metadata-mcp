@@ -1,3 +1,4 @@
+import re
 import sqlite3
 import polars as pl
 import os
@@ -197,7 +198,7 @@ class CatalogMerger:
             # "num_tracks": Integer,
         }
 
-        conn = sqlite3.connect(os.path.join(BASEPATH, "merged_bandcamp_catalog.db"))
+        conn = sqlite3.connect(os.path.join(BASEPATH, "release_catalog.db"))
         self.merged_df.to_pandas().to_sql(
             "merged_data",
             conn,
@@ -283,6 +284,48 @@ class CatalogMerger:
 
         # Drop the original table
         cursor.execute("DROP TABLE merged_data")
+
+        # Create artist table
+        cursor.execute("DROP TABLE IF EXISTS artist")
+        cursor.execute(
+            """
+            CREATE TABLE artist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL
+            )
+            """
+        )
+
+        # Create artist_track_link table
+        cursor.execute("DROP TABLE IF EXISTS artist_track_link")
+        cursor.execute(
+            """
+            CREATE TABLE artist_track_link (
+                artist_id INTEGER NOT NULL,
+                track_id INTEGER NOT NULL,
+                PRIMARY KEY (artist_id, track_id),
+                FOREIGN KEY (artist_id) REFERENCES artist(id),
+                FOREIGN KEY (track_id) REFERENCES tracks(id)
+            )
+            """
+        )
+
+        # Populate artist and artist_track_link from tracks.artists column
+        cursor.execute("SELECT id, artists FROM tracks WHERE artists IS NOT NULL")
+        for track_id, artists_str in cursor.fetchall():
+            artists = re.split(r"\|| & ", artists_str)
+            for artist_name in (a.strip() for a in artists if a.strip()):
+                cursor.execute(
+                    "INSERT OR IGNORE INTO artist (name) VALUES (?)", (artist_name,)
+                )
+                cursor.execute(
+                    "SELECT id FROM artist WHERE name = ?", (artist_name,)
+                )
+                artist_id = cursor.fetchone()[0]
+                cursor.execute(
+                    "INSERT OR IGNORE INTO artist_track_link (artist_id, track_id) VALUES (?, ?)",
+                    (artist_id, track_id),
+                )
 
         conn.commit()
 
