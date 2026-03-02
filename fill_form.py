@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -6,6 +7,11 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
 from models.names_prefixes import ReleaseType, COLUMN_DICT
+
+
+_MB_RELEASE_URL_RE = re.compile(
+    r"https://musicbrainz\.org/release/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 
 
 class MusicBrainzFiller:
@@ -250,6 +256,22 @@ class MusicBrainzFiller:
             track_str = f"{t.get('track_number')}. {t.get('track_title')} - {t.get('artists')}{duration}"
             tracklist_str += track_str + "\n"
         return tracklist_str.strip()
+
+    def wait_for_submission(self, timeout: int = 300) -> str | None:
+        """
+        Polls the browser URL until MusicBrainz navigates to the new release page
+        after the user submits the form. Returns the release URL or None on timeout.
+        """
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                current_url = self.driver.current_url
+                if _MB_RELEASE_URL_RE.match(current_url):
+                    return current_url
+            except Exception:
+                return None
+            time.sleep(1)
+        return None
 
     def close(self):
         # self.driver.quit()

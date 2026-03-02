@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sqlite3
 
@@ -22,6 +23,18 @@ BASEPATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 DB_NAME = "merged_bandcamp_catalog.db"
 DB_PATH = os.path.join(BASEPATH, DB_NAME)
 
+# Maps ReleaseType to (link_table_name, catalog_id_column)
+MUSICBRAINZ_LINK_TABLES = {
+    ReleaseType.DIGITAL: ("musicbrainz_digital_links", "digital_catalog_id"),
+    ReleaseType.CASSETTE: ("musicbrainz_mc_links", "mc_catalog_id"),
+    ReleaseType.LP: ("musicbrainz_lp_links", "lp_catalog_id"),
+    ReleaseType.CD: ("musicbrainz_cd_links", "cd_catalog_id"),
+    ReleaseType.ARCHIVE: ("musicbrainz_archive_links", "archive_catalog_id"),
+}
+
+# Keeps the Selenium driver alive between MCP tool calls
+_active_filler: MusicBrainzFiller | None = None
+
 
 @contextmanager
 def get_db_connection():
@@ -35,6 +48,17 @@ def get_db_connection():
         yield conn
     finally:
         conn.close()
+
+
+def _save_musicbrainz_link_to_db(catalog_id: str, url: str, medium: ReleaseType):
+    """Inserts a MusicBrainz release URL into the appropriate link table."""
+    table, column = MUSICBRAINZ_LINK_TABLES[medium]
+    with get_db_connection() as conn:
+        conn.execute(
+            f"INSERT INTO {table} ({column}, url_record) VALUES (?, ?)",
+            (catalog_id, url),
+        )
+        conn.commit()
 
 
 @mcp.tool()
@@ -195,22 +219,79 @@ async def fill_musicbrainz_form(
     catalog IDs available for the release, ask the user, which one to use.
     Since there is sometimes an issue with filling in the tracklist, print the tracklist to the user
     into the chat, so they can easily copy-paste it into the form if needed.
+    After filling the form, this tool waits up to 5 minutes for the user to submit.
+    On success the MusicBrainz URL is saved to the database automatically.
+    If the wait times out, ask the user to paste the URL and call save_musicbrainz_link manually.
     """
+    global _active_filler
+
     # 1. Get the data
     data = await collect_release_data(release_id)
     if "error" in data:
         return f"Error: {data['error']}"
 
-    # 2. Launch the browser filler
+    catalog_id = data.get(COLUMN_DICT.get(medium, "digital_catalog_id"))
+
+    # 2. Launch (or reuse) the browser filler
     try:
-        filler = MusicBrainzFiller()
+        if _active_filler is None:
+            _active_filler = MusicBrainzFiller()
+        filler = _active_filler
         track_list = filler.fill_release(data, medium)
-        return (
-            "Browser opened and form filled (check the window). Tracklist:\n"
-            + track_list
-        )
     except Exception as e:
+        _active_filler = None
         return f"Failed to fill form: {str(e)}"
+
+    # 3. Wait for the user to submit the form (up to 5 minutes)
+    release_url = await asyncio.to_thread(filler.wait_for_submission, 300)
+
+    if release_url:
+        if catalog_id:
+            try:
+                _save_musicbrainz_link_to_db(catalog_id, release_url, medium)
+                return (
+                    f"Release submitted successfully!\n"
+                    f"MusicBrainz URL: {release_url}\n"
+                    f"Saved to database under catalog ID: {catalog_id}\n\n"
+                    f"Tracklist (for reference):\n{track_list}"
+                )
+            except Exception as e:
+                return (
+                    f"Release submitted but DB save failed: {e}\n"
+                    f"MusicBrainz URL: {release_url}\n"
+                    f"Please call save_musicbrainz_link('{catalog_id}', '{release_url}', medium) manually.\n\n"
+                    f"Tracklist:\n{track_list}"
+                )
+        else:
+            return (
+                f"Release submitted! MusicBrainz URL: {release_url}\n"
+                f"No catalog ID found for medium {medium.name} — nothing saved to DB.\n\n"
+                f"Tracklist:\n{track_list}"
+            )
+    else:
+        return (
+            f"Form filled — waiting for submission timed out.\n"
+            f"Please submit the form in the browser, then paste the MusicBrainz URL here\n"
+            f"and call save_musicbrainz_link(catalog_id='{catalog_id}', url=<pasted URL>, medium='{medium.name}').\n\n"
+            f"Tracklist:\n{track_list}"
+        )
+
+
+@mcp.tool()
+async def save_musicbrainz_link(
+    catalog_id: str, url: str, medium: ReleaseType = ReleaseType.DIGITAL
+) -> str:
+    """
+    Saves a MusicBrainz release URL to the database for the given catalog ID.
+    Use this as a fallback when fill_musicbrainz_form timed out waiting for submission,
+    or to manually record a URL that was already submitted in the browser.
+    The `medium` must match the release type of the catalog_id provided.
+    """
+    try:
+        _save_musicbrainz_link_to_db(catalog_id, url, medium)
+        return f"Saved: {catalog_id} → {url} in {MUSICBRAINZ_LINK_TABLES[medium][0]}"
+    except Exception as e:
+        return f"Failed to save link: {e}"
 
 
 @mcp.tool()
