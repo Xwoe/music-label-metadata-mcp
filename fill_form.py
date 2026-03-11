@@ -284,7 +284,7 @@ if __name__ == "__main__":
     test_data = {
         "artist_name": "Exit Chamber",
         "release_title": "Phased Returns",
-        "label": "Passed Recordings",
+        "label": os.environ["MUSICLABEL"],
         "mc_catalog_id": "PR-MC-003",
         "cd_catalog_id": None,
         "lp_catalog_id": None,

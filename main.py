@@ -14,23 +14,33 @@ from fill_form import MusicBrainzFiller
 mcp = FastMCP("MusicLabelDataFiller")
 
 # Constants
-# NWS_API_BASE = "https://api.weather.gov"
-
 
 USER_AGENT = "album-data-app/1.0"
 
 BASEPATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
-DB_NAME = "merged_bandcamp_catalog.db"
+DB_NAME = "release_catalog.db"
 DB_PATH = os.path.join(BASEPATH, DB_NAME)
 
-# Maps ReleaseType to (link_table_name, catalog_id_column)
-MUSICBRAINZ_LINK_TABLES = {
-    ReleaseType.DIGITAL: ("musicbrainz_digital_links", "digital_catalog_id"),
-    ReleaseType.CASSETTE: ("musicbrainz_mc_links", "mc_catalog_id"),
-    ReleaseType.LP: ("musicbrainz_lp_links", "lp_catalog_id"),
-    ReleaseType.CD: ("musicbrainz_cd_links", "cd_catalog_id"),
-    ReleaseType.ARCHIVE: ("musicbrainz_archive_links", "archive_catalog_id"),
+VALID_SERVICES = ["musicbrainz", "discogs", "cddb"]
+
+# Maps ReleaseType to (link_table_suffix, catalog_id_column)
+_LINK_TABLE_SUFFIXES = {
+    ReleaseType.DIGITAL: ("digital_links", "digital_catalog_id"),
+    ReleaseType.CASSETTE: ("mc_links", "mc_catalog_id"),
+    ReleaseType.LP: ("lp_links", "lp_catalog_id"),
+    ReleaseType.CD: ("cd_links", "cd_catalog_id"),
+    ReleaseType.ARCHIVE: ("archive_links", "archive_catalog_id"),
 }
+
+
+def _link_table(service: str, release_type: ReleaseType) -> tuple[str, str]:
+    """Returns (table_name, catalog_id_column) for a given service and release type."""
+    suffix, column = _LINK_TABLE_SUFFIXES[release_type]
+    return f"{service}_{suffix}", column
+
+
+# Keep for backward compatibility with _save_musicbrainz_link_to_db
+MUSICBRAINZ_LINK_TABLES = {rt: _link_table("musicbrainz", rt) for rt in ReleaseType}
 
 # Keeps the Selenium driver alive between MCP tool calls
 _active_filler: MusicBrainzFiller | None = None
@@ -84,6 +94,26 @@ async def get_release_id_by_name(artist_name: str, release_title: str) -> dict:
         cursor.execute(
             "SELECT release_id FROM releases WHERE LOWER(album_artists) = LOWER(?) AND LOWER(album_title) = LOWER(?)",
             (artist_name, release_title),
+        )
+        row = cursor.fetchone()
+
+    if not row:
+        return {"error": "Release not found"}
+
+    return row["release_id"]
+
+
+@mcp.tool()
+async def get_release_id_by_album_name(album_name: str) -> dict:
+    """
+    Fetches the release_id for a given album name.
+    Returns a JSON object with the release_id or an error message if not found.
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT release_id FROM releases WHERE LOWER(album_title) = LOWER(?)",
+            (album_name,),
         )
         row = cursor.fetchone()
 
@@ -173,6 +203,54 @@ async def list_all_releases() -> list:
         }
         for row in rows
     ]
+
+
+@mcp.tool()
+async def get_next_unsubmitted_release(
+    release_type: ReleaseType, service: str = "musicbrainz"
+) -> dict:
+    """
+    Finds the latest release (by catalog ID) that has not yet been submitted to the
+    given service for the given release type.
+
+    Use this to answer requests like "add the next digital release to musicbrainz":
+    call this tool first to get the release, then pass the result to fill_musicbrainz_form.
+
+    `release_type` — one of: DIGITAL, CASSETTE, LP, CD, ARCHIVE
+    `service`      — one of: "musicbrainz", "discogs", "cddb"
+
+    Returns full release data (same structure as collect_release_data) or an error dict.
+    """
+    if service not in VALID_SERVICES:
+        return {"error": f"Unknown service '{service}'. Valid: {VALID_SERVICES}"}
+
+    catalog_col = COLUMN_DICT.get(release_type)
+    if not catalog_col:
+        return {"error": f"Unknown release type: {release_type}"}
+
+    link_table, _ = _link_table(service, release_type)
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT r.release_id
+            FROM releases r
+            LEFT JOIN {link_table} l ON r.{catalog_col} = l.{catalog_col}
+            WHERE r.{catalog_col} IS NOT NULL
+              AND l.{catalog_col} IS NULL
+            ORDER BY r.{catalog_col} DESC
+            LIMIT 1
+            """,
+        )
+        row = cursor.fetchone()
+
+    if not row:
+        return {
+            "error": f"No unsubmitted {release_type.name} releases found for {service}"
+        }
+
+    return await collect_release_data(row["release_id"])
 
 
 @mcp.tool()

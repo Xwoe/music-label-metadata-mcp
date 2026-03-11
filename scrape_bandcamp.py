@@ -12,7 +12,7 @@ from models.album import Album, Track, CSV_SEPARATOR, LIST_SEPARATOR
 from isrc_getter import ISRCGetter
 
 logger = get_logger(__name__)
-ALBUM_LABEL = "Passed Recordings"
+ALBUM_LABEL = os.environ["MUSICLABEL"]
 
 
 class BandcampScraper:
@@ -55,7 +55,7 @@ class BandcampScraper:
                 break
             album_url = album.find("a")["href"]
             if not album_url.startswith("http"):
-                album_url = "https://passedrecordings.bandcamp.com" + album_url
+                album_url = os.environ["MUSICLABEL_BANDCAMP_URL"].rstrip("/") + album_url
             print(f"Found album URL: {album_url}")
             try:
                 album = self.parse_album(album_url)
@@ -155,11 +155,11 @@ class BandcampScraper:
 
 
 if __name__ == "__main__":
-    bandcamp_url = "https://passedrecordings.bandcamp.com/"
+    bandcamp_url = os.environ["MUSICLABEL_BANDCAMP_URL"]
     wait_selector = "li.music-grid-item"
     scraper = BandcampScraper(wait_selector=wait_selector, bandcamp_url=bandcamp_url)
     scraper.run()
-    # scraper.parse_album('https://passedrecordings.bandcamp.com/album/scapes-2')
+    # scraper.parse_album(os.environ["MUSICLABEL_BANDCAMP_URL"] + 'album/scapes-2')
     # album_data = scraper.scrape_album_info('https://artistname.bandcamp.com/album/albumname')
     # print(album_data)
     # scraper.close()

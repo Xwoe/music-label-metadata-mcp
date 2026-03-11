@@ -68,7 +68,7 @@ class CatalogMerger:
 
     def clean_up_bandcamp_albums(self):
         self.bandcamp_df = self.bandcamp_df.with_columns(
-            pl.when(pl.col("album_artists") == "Passed Recordings")
+            pl.when(pl.col("album_artists") == os.environ["MUSICLABEL"])
             .then(pl.lit("Various"))
             .otherwise(pl.col("album_artists"))
             .alias("album_artists")
@@ -255,6 +255,12 @@ class CatalogMerger:
             FROM merged_data
             """
         )
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_release_id ON releases(release_id)")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_digital_catalog_id ON releases(digital_catalog_id)")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_cd_catalog_id ON releases(cd_catalog_id)")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_lp_catalog_id ON releases(lp_catalog_id)")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_mc_catalog_id ON releases(mc_catalog_id)")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_archive_catalog_id ON releases(archive_catalog_id)")
 
         cursor.execute("DROP TABLE IF EXISTS tracks")
         cursor.execute(

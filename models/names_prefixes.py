@@ -1,6 +1,7 @@
+import os
 from enum import Enum
 
-ALBUM_LABEL = "Passed Recordings"
+ALBUM_LABEL = os.environ["MUSICLABEL"]
 
 
 class ReleaseType(Enum):
