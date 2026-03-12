@@ -1,7 +1,6 @@
 import asyncio
 import os
 import sqlite3
-import uuid
 
 # from typing import Any
 # import httpx
@@ -13,6 +12,7 @@ from models.album import Album, LIST_SEPARATOR
 from fill_form import MusicBrainzFiller
 from log import get_logger
 from scrape_bandcamp import BandcampScraper
+from mldg_utils import generate_release_id
 
 logger = get_logger(__name__)
 
@@ -409,7 +409,7 @@ def album_exists_in_db(bandcamp_url: str) -> bool:
 
 def insert_album_to_db(album: Album) -> str:
     """Inserts an Album (and its tracks) into the releases and tracks tables."""
-    release_id = str(uuid.uuid4())
+    release_id = generate_release_id(album.album_artists, album.title)
     artists_str = LIST_SEPARATOR.join(album.album_artists)
     tags_str = LIST_SEPARATOR.join(album.tags)
     release_date_str = album.release_date.strftime("%Y-%m-%d")

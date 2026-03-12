@@ -61,8 +61,7 @@ class BandcampScraper:
             print(f"Found album URL: {album_url}")
             try:
                 album = self.parse_album(album_url)
-                album.label = ALBUM_LABEL
-                album.num_tracks = len(album.tracks)
+
                 self.csv += album.to_csv(include_header)
                 include_header = False
 
@@ -115,6 +114,8 @@ class BandcampScraper:
             self.parse_track(album, track_row)
 
         print(f"Parsed album: {album}")
+        album.label = ALBUM_LABEL
+        album.num_tracks = len(album.tracks)
         return album
 
     def extract_album_title(self, album, soup):
