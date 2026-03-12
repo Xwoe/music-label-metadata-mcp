@@ -55,7 +55,9 @@ class BandcampScraper:
                 break
             album_url = album.find("a")["href"]
             if not album_url.startswith("http"):
-                album_url = os.environ["MUSICLABEL_BANDCAMP_URL"].rstrip("/") + album_url
+                album_url = (
+                    os.environ["MUSICLABEL_BANDCAMP_URL"].rstrip("/") + album_url
+                )
             print(f"Found album URL: {album_url}")
             try:
                 album = self.parse_album(album_url)
@@ -74,6 +76,30 @@ class BandcampScraper:
 
         print(self.csv)
         self.store_csv(self.csv)
+
+    def iterate_albums(self):
+        self.driver.get(self.bandcamp_url)
+
+        # Wait for dynamic content to load
+        WebDriverWait(self.driver, self.timeout).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, self.wait_selector))
+        )
+
+        # Get the page source after JavaScript execution
+        html_content = self.driver.page_source
+
+        # Parse with Beautiful Soup
+        soup = BeautifulSoup(html_content, "html.parser")
+        albums = soup.select("li.music-grid-item")
+        logger.info(f"Found {len(albums)} albums on the page.")
+        for album in albums:
+            album_url = album.find("a")["href"]
+            if not album_url.startswith("http"):
+                album_url = (
+                    os.environ["MUSICLABEL_BANDCAMP_URL"].rstrip("/") + album_url
+                )
+            print(f"Found album URL: {album_url}")
+            yield album_url
 
     def parse_album(self, album_url: str):
         album = Album()
@@ -159,7 +185,3 @@ if __name__ == "__main__":
     wait_selector = "li.music-grid-item"
     scraper = BandcampScraper(wait_selector=wait_selector, bandcamp_url=bandcamp_url)
     scraper.run()
-    # scraper.parse_album(os.environ["MUSICLABEL_BANDCAMP_URL"] + 'album/scapes-2')
-    # album_data = scraper.scrape_album_info('https://artistname.bandcamp.com/album/albumname')
-    # print(album_data)
-    # scraper.close()

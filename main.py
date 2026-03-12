@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sqlite3
+import uuid
 
 # from typing import Any
 # import httpx
@@ -8,7 +9,13 @@ import sqlite3
 from contextlib import contextmanager
 from mcp.server.fastmcp import FastMCP
 from models.names_prefixes import ALBUM_LABEL, ReleaseType, COLUMN_DICT
+from models.album import Album, LIST_SEPARATOR
 from fill_form import MusicBrainzFiller
+from log import get_logger
+from scrape_bandcamp import BandcampScraper
+
+logger = get_logger(__name__)
+
 
 # Initialize FastMCP server
 mcp = FastMCP("MusicLabelDataFiller")
@@ -390,6 +397,119 @@ async def add_release_to_musicbrainz_by_name(
 
     # 2. Fill the MusicBrainz form using the fetched release ID
     return await fill_musicbrainz_form(release_id, medium)
+
+
+def album_exists_in_db(bandcamp_url: str) -> bool:
+    """Returns True if a release with the given Bandcamp URL already exists in the DB."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM releases WHERE bandcamp_url = ?", (bandcamp_url,))
+        return cursor.fetchone() is not None
+
+
+def insert_album_to_db(album: Album) -> str:
+    """Inserts an Album (and its tracks) into the releases and tracks tables."""
+    release_id = str(uuid.uuid4())
+    artists_str = LIST_SEPARATOR.join(album.album_artists)
+    tags_str = LIST_SEPARATOR.join(album.tags)
+    release_date_str = album.release_date.strftime("%Y-%m-%d")
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """INSERT INTO releases
+               (release_id, album_artists, album_title, label, total_length, num_tracks,
+                tags, release_date, bandcamp_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                release_id,
+                artists_str,
+                album.title,
+                album.label,
+                album.total_length,
+                album.num_tracks,
+                tags_str,
+                release_date_str,
+                album.bandcamp_url,
+            ),
+        )
+        conn.executemany(
+            """INSERT INTO tracks (release_id, track_number, artists, track_title, runtime, isrc)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    release_id,
+                    track.track_number,
+                    LIST_SEPARATOR.join(track.artists),
+                    track.track_title,
+                    track.runtime,
+                    track.isrc,
+                )
+                for track in album.tracks
+            ],
+        )
+        conn.commit()
+    logger.info(f"Inserted album '{album.title}' with release_id={release_id}")
+    return release_id
+
+
+@mcp.tool()
+async def update_bandcamp_data():
+    """
+    Scrapes the Bandcamp page for the label and updates the local database with any new releases.
+    This tool can be run periodically to keep the database in sync with the Bandcamp page.
+    If any albums fail to parse, their URLs are logged for manual review.
+    All successfully parsed albums are inserted into the database, and a summary of the operation
+    is printed at the end.
+    Use this command if the user requests to get the latest releases from Bandcamp or to
+    sync new releases that were added to Bandcamp after the initial data collection.
+    """
+
+    scraper = BandcampScraper(
+        wait_selector="li.music-grid-item",
+        bandcamp_url=os.environ["MUSICLABEL_BANDCAMP_URL"],
+    )
+    failed_album_links = []
+    for album_url in scraper.iterate_albums():
+        try:
+            album = scraper.parse_album(album_url)
+            if not album_exists_in_db(album_url):
+                release_id = insert_album_to_db(album)
+                # we always have digital releases, so we can generate a catalog ID right away
+                await add_catalog_id_to_release(release_id, ReleaseType.DIGITAL)
+            else:
+                logger.info(f"Album already exists: {album_url}")
+                break
+        except Exception as e:
+            logger.error(f"Error parsing album at {album_url}: {e}")
+            failed_album_links.append(album_url)
+    if failed_album_links:
+        logger.warning(
+            f"Failed to parse the following album links: {failed_album_links}"
+        )
+
+
+@mcp.tool()
+async def add_catalog_id_to_release(release_id: str, release_type: ReleaseType) -> str:
+    """
+    Adds a catalog ID to an existing release in the database for the specified release type.
+    This is useful for updating releases with new catalog IDs after they have been added to the database.
+    """
+    column_name = COLUMN_DICT.get(release_type)
+    catalog_id = await get_new_catalog_id(release_type)
+    if not column_name:
+        return f"Error: Unknown release type '{release_type}'"
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE releases SET {column_name} = ? WHERE release_id = ?",
+            (catalog_id, release_id),
+        )
+        if cursor.rowcount == 0:
+            return f"Error: No release found with ID '{release_id}'"
+        conn.commit()
+
+    return f"Successfully updated release '{release_id}' with {release_type.name} catalog ID '{catalog_id}'"
 
 
 if __name__ == "__main__":

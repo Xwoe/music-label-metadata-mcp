@@ -4,6 +4,7 @@ import polars as pl
 import os
 from sqlalchemy.types import Integer
 from models.names_prefixes import COLUMN_DICT, ReleaseType
+from mldg_utils import generate_release_id
 
 
 BANDCAMP_FILENAME = "bandcamp_albums.csv"
@@ -35,9 +36,13 @@ class CatalogMerger:
 
     def add_unique_release_id(self):
         self.merged_df = self.merged_df.with_columns(
-            pl.concat_str(["album_artists", "album_title"], separator="|")
-            .hash(seed=0)
-            .cast(pl.Utf8)
+            pl.struct(["album_artists", "album_title"])
+            .map_elements(
+                lambda row: generate_release_id(
+                    row["album_artists"], row["album_title"]
+                ),
+                return_dtype=pl.Utf8,
+            )
             .alias("release_id")
         )
 
@@ -255,12 +260,24 @@ class CatalogMerger:
             FROM merged_data
             """
         )
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_release_id ON releases(release_id)")
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_digital_catalog_id ON releases(digital_catalog_id)")
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_cd_catalog_id ON releases(cd_catalog_id)")
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_lp_catalog_id ON releases(lp_catalog_id)")
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_mc_catalog_id ON releases(mc_catalog_id)")
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_archive_catalog_id ON releases(archive_catalog_id)")
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_release_id ON releases(release_id)"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_digital_catalog_id ON releases(digital_catalog_id)"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_cd_catalog_id ON releases(cd_catalog_id)"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_lp_catalog_id ON releases(lp_catalog_id)"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_mc_catalog_id ON releases(mc_catalog_id)"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_archive_catalog_id ON releases(archive_catalog_id)"
+        )
 
         cursor.execute("DROP TABLE IF EXISTS tracks")
         cursor.execute(
@@ -273,7 +290,7 @@ class CatalogMerger:
                 track_title TEXT,
                 runtime INTEGER,
                 isrc TEXT,
-                FOREIGN KEY (release_id) REFERENCES releases(release_id)
+                FOREIGN KEY (release_id) REFERENCES releases(release_id) ON DELETE CASCADE
             )
             """
         )
@@ -324,9 +341,7 @@ class CatalogMerger:
                 cursor.execute(
                     "INSERT OR IGNORE INTO artist (name) VALUES (?)", (artist_name,)
                 )
-                cursor.execute(
-                    "SELECT id FROM artist WHERE name = ?", (artist_name,)
-                )
+                cursor.execute("SELECT id FROM artist WHERE name = ?", (artist_name,))
                 artist_id = cursor.fetchone()[0]
                 cursor.execute(
                     "INSERT OR IGNORE INTO artist_track_link (artist_id, track_id) VALUES (?, ?)",
