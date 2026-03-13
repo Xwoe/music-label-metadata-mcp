@@ -7,16 +7,19 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import mechanicalsoup
 from bs4 import BeautifulSoup
+from global_config import MUSICLABEL, BANDCAMP_URL, VARIOUS_ARTISTS
 from log import get_logger
-from models.album import Album, Track, CSV_SEPARATOR, LIST_SEPARATOR
+from models.album import Album, Track
 from isrc_getter import ISRCGetter
 
+
 logger = get_logger(__name__)
-ALBUM_LABEL = "Passed Recordings"
 
 
 class BandcampScraper:
-    def __init__(self, wait_selector, timeout=10, bandcamp_url: str = ""):
+    def __init__(
+        self, wait_selector="li.music-grid-item", timeout=10, bandcamp_url: str = ""
+    ):
         """
         Use Selenium to load dynamic content, then parse with Beautiful Soup
         """
@@ -55,17 +58,17 @@ class BandcampScraper:
                 break
             album_url = album.find("a")["href"]
             if not album_url.startswith("http"):
-                album_url = "https://passedrecordings.bandcamp.com" + album_url
+                album_url = self.bandcamp_url.rstrip("/") + album_url
             print(f"Found album URL: {album_url}")
             try:
                 album = self.parse_album(album_url)
-                album.label = ALBUM_LABEL
-                album.num_tracks = len(album.tracks)
                 self.csv += album.to_csv(include_header)
                 include_header = False
 
             except Exception as e:
-                logger.error(f"Error parsing album at {album_url}: {e}")
+                logger.error(
+                    f"Error parsing album at {album_url}: {e}. Hint: Unreleased albums can't be parsed."
+                )
                 failed_album_links.append(album_url)
         if failed_album_links:
             logger.warning(
@@ -74,6 +77,28 @@ class BandcampScraper:
 
         print(self.csv)
         self.store_csv(self.csv)
+
+    def iterate_albums(self):
+        self.driver.get(self.bandcamp_url)
+
+        # Wait for dynamic content to load
+        WebDriverWait(self.driver, self.timeout).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, self.wait_selector))
+        )
+
+        # Get the page source after JavaScript execution
+        html_content = self.driver.page_source
+
+        # Parse with Beautiful Soup
+        soup = BeautifulSoup(html_content, "html.parser")
+        albums = soup.select("li.music-grid-item")
+        logger.info(f"Found {len(albums)} albums on the page.")
+        for album in albums:
+            album_url = album.find("a")["href"]
+            if not album_url.startswith("http"):
+                album_url = self.bandcamp_url.rstrip("/") + album_url
+            print(f"Found album URL: {album_url}")
+            yield album_url
 
     def parse_album(self, album_url: str):
         album = Album()
@@ -88,6 +113,8 @@ class BandcampScraper:
         for track_row in track_rows:
             self.parse_track(album, track_row)
 
+        album.label = MUSICLABEL
+        album.num_tracks = len(album.tracks)
         print(f"Parsed album: {album}")
         return album
 
@@ -95,8 +122,17 @@ class BandcampScraper:
         name_section = soup.find("div", id="name-section")
         artist_link = name_section.find("a")
         if artist_link:
-            album.album_artists = [artist_link.text.strip()]
+            album.album_artists = self.get_album_artists_name(
+                [artist_link.text.strip()]
+            )
         album.title = name_section.find("h2", class_="trackTitle").text.strip()
+
+    def get_album_artists_name(self, artists: list[str]):
+        if not artists:
+            return ""
+        if len(artists) == 1 and artists[0] == MUSICLABEL:
+            return VARIOUS_ARTISTS
+        return artists
 
     def extract_release_date(self, album, soup):
         release_info = soup.find("div", class_="tralbum-credits")
@@ -131,7 +167,7 @@ class BandcampScraper:
         track.isrc = self.get_isrc(artist=track.artists_str, track=track.track_title)
         album.total_length += track.runtime
         album.tracks.append(track)
-        print(f"Parsed track: {track}")
+        # print(f"Parsed track: {track}")
 
     def get_isrc(self, artist, track):
         return self.isrc_getter.get_isrc_from_track(artist, track)
@@ -147,19 +183,14 @@ class BandcampScraper:
 
     def store_csv(self, csv_data: str, filename: str = "bandcamp_albums.csv"):
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        results_dir = os.path.join(script_dir, "results")
-        os.makedirs(results_dir, exist_ok=True)
-        filename = os.path.join(results_dir, filename)
+        data_dir = os.path.join(script_dir, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        filename = os.path.join(data_dir, filename)
         with open(filename, "w", encoding="utf-8") as f:
             f.write(csv_data)
 
 
 if __name__ == "__main__":
-    bandcamp_url = "https://passedrecordings.bandcamp.com/"
     wait_selector = "li.music-grid-item"
-    scraper = BandcampScraper(wait_selector=wait_selector, bandcamp_url=bandcamp_url)
+    scraper = BandcampScraper(wait_selector=wait_selector, bandcamp_url=BANDCAMP_URL)
     scraper.run()
-    # scraper.parse_album('https://passedrecordings.bandcamp.com/album/scapes-2')
-    # album_data = scraper.scrape_album_info('https://artistname.bandcamp.com/album/albumname')
-    # print(album_data)
-    # scraper.close()

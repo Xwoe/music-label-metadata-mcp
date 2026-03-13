@@ -63,8 +63,10 @@ class ISRCGetter:
     def get_isrc_from_track(self, artist, track):
 
         isrc = ""
-        results = self.spotify.search(q=f"artist:{artist} track:{track}", type="track")
         try:
+            results = self.spotify.search(
+                q=f"artist:{artist} track:{track}", type="track"
+            )
             if results and "tracks" in results:
                 isrc = self.get_isrc(results)
                 logger.info(f"Found ISRC {isrc} for {artist} - {track}")

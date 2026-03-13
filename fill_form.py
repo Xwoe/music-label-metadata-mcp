@@ -1,11 +1,17 @@
 import os
+import re
 import time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
-from models.names_prefixes import ReleaseType, COLUMN_DICT
+from global_config import ReleaseType, COLUMN_DICT
+
+
+_MB_RELEASE_URL_RE = re.compile(
+    r"https://musicbrainz\.org/release/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 
 
 class MusicBrainzFiller:
@@ -251,6 +257,22 @@ class MusicBrainzFiller:
             tracklist_str += track_str + "\n"
         return tracklist_str.strip()
 
+    def wait_for_submission(self, timeout: int = 300) -> str | None:
+        """
+        Polls the browser URL until MusicBrainz navigates to the new release page
+        after the user submits the form. Returns the release URL or None on timeout.
+        """
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                current_url = self.driver.current_url
+                if _MB_RELEASE_URL_RE.match(current_url):
+                    return current_url
+            except Exception:
+                return None
+            time.sleep(1)
+        return None
+
     def close(self):
         # self.driver.quit()
         pass
@@ -260,52 +282,52 @@ if __name__ == "__main__":
     # Test
     filler = MusicBrainzFiller()
     test_data = {
-        "artist_name": "Exit Chamber",
-        "release_title": "Phased Returns",
-        "label": "Passed Recordings",
-        "mc_catalog_id": "PR-MC-003",
+        "artist_name": "Awesome Artist",
+        "release_title": "Awesome Album",
+        "label": os.environ["MUSICLABEL"],
+        "mc_catalog_id": "",
         "cd_catalog_id": None,
         "lp_catalog_id": None,
-        "digital_catalog_id": "PR-018",
-        "release_date": "2023-10-06T00:00:00",
+        "digital_catalog_id": "",
+        "release_date": "2023-11-06T00:00:00",
         "archive_catalog_id": None,
         "type": "Album",
-        "bandcamp_url": "https://exitchamber.bandcamp.com/album/phased-returns",
+        "bandcamp_url": "https://ficitouscatlabel.bandcamp.com/album/awesome-album",
         "tracks": [
             {
                 "track_number": 1,
-                "artists": "Exit Chamber",
-                "track_title": "Test Flight",
+                "artists": "Awesome Artist",
+                "track_title": "Test1",
                 "runtime": 412,
-                "isrc": "QZTB42353296",
+                "isrc": "",
             },
             {
                 "track_number": 2,
-                "artists": "Exit Chamber",
-                "track_title": "First Experience of Vacuum",
+                "artists": "Awesome Artist",
+                "track_title": "Test2",
                 "runtime": 520,
-                "isrc": "QZTB42353297",
+                "isrc": "",
             },
             {
                 "track_number": 3,
-                "artists": "Exit Chamber",
-                "track_title": "A Mote of Dust Suspended in a Sunbeam",
+                "artists": "Awesome Artist",
+                "track_title": "Test3",
                 "runtime": 415,
-                "isrc": "QZTB42353298",
+                "isrc": "",
             },
             {
                 "track_number": 4,
-                "artists": "Exit Chamber",
-                "track_title": "It's Not Over, It's Just Different",
+                "artists": "Awesome Artist",
+                "track_title": "Test4",
                 "runtime": 569,
-                "isrc": "QZTB42353299",
+                "isrc": "",
             },
             {
                 "track_number": 5,
-                "artists": "Exit Chamber",
-                "track_title": "120AU",
+                "artists": "Awesome Artist",
+                "track_title": "Test5",
                 "runtime": 504,
-                "isrc": "QZTB42353300",
+                "isrc": "",
             },
         ],
     }

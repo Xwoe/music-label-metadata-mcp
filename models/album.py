@@ -109,4 +109,7 @@ class Album(BaseModel):
         return output
 
     def __str__(self):
-        return f"Album(artists={self.album_artists}, release_date={self.release_date}, label={self.label}, num_tracks={self.num_tracks})"
+        return f"""
+            Album(artists={self.album_artists}, album_title={self.title}, release_date={self.release_date},
+            label={self.label}, num_tracks={self.num_tracks})
+            """

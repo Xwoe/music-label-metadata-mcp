@@ -1,13 +1,24 @@
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import re
 import sqlite3
 import polars as pl
-import os
 from sqlalchemy.types import Integer
-from models.names_prefixes import COLUMN_DICT, ReleaseType
-
+from global_config import (
+    BASEPATH,
+    DB_PATH,
+    MUSICLABEL,
+    COLUMN_DICT,
+    ReleaseType,
+    VARIOUS_ARTISTS,
+)
+from mldg_utils import generate_release_id
 
 BANDCAMP_FILENAME = "bandcamp_albums.csv"
 CATALOG_FILENAME = "catalog_numbers.csv"
-BASEPATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 
 
 class CatalogMerger:
@@ -34,9 +45,13 @@ class CatalogMerger:
 
     def add_unique_release_id(self):
         self.merged_df = self.merged_df.with_columns(
-            pl.concat_str(["album_artists", "album_title"], separator="|")
-            .hash(seed=0)
-            .cast(pl.Utf8)
+            pl.struct(["album_artists", "album_title"])
+            .map_elements(
+                lambda row: generate_release_id(
+                    row["album_artists"], row["album_title"]
+                ),
+                return_dtype=pl.Utf8,
+            )
             .alias("release_id")
         )
 
@@ -52,7 +67,7 @@ class CatalogMerger:
         )
         self.merged_df = self.merged_df.with_columns(
             pl.when(pl.col("album_artists") == "Various")
-            .then(pl.lit("Various Artists"))
+            .then(pl.lit(VARIOUS_ARTISTS))
             .otherwise(pl.col("album_artists"))
             .alias("album_artists")
         )
@@ -67,7 +82,7 @@ class CatalogMerger:
 
     def clean_up_bandcamp_albums(self):
         self.bandcamp_df = self.bandcamp_df.with_columns(
-            pl.when(pl.col("album_artists") == "Passed Recordings")
+            pl.when(pl.col("album_artists") == MUSICLABEL)
             .then(pl.lit("Various"))
             .otherwise(pl.col("album_artists"))
             .alias("album_artists")
@@ -197,7 +212,7 @@ class CatalogMerger:
             # "num_tracks": Integer,
         }
 
-        conn = sqlite3.connect(os.path.join(BASEPATH, "merged_bandcamp_catalog.db"))
+        conn = sqlite3.connect(DB_PATH)
         self.merged_df.to_pandas().to_sql(
             "merged_data",
             conn,
@@ -246,13 +261,54 @@ class CatalogMerger:
         cursor.execute("DROP TABLE IF EXISTS releases")
         cursor.execute(
             """
-            CREATE TABLE releases AS
+            CREATE TABLE releases (
+                release_id          TEXT PRIMARY KEY,
+                album_artists       TEXT,
+                album_title         TEXT,
+                label               TEXT,
+                total_length        INTEGER,
+                num_tracks          INTEGER,
+                tags                TEXT,
+                release_date        TEXT,
+                type                TEXT,
+                mc_catalog_id       TEXT,
+                cd_catalog_id       TEXT,
+                lp_catalog_id       TEXT,
+                digital_catalog_id  TEXT,
+                archive_catalog_id  TEXT,
+                legacy_catalog_id   TEXT,
+                bandcamp_url        TEXT
+            )
+            """
+        )
+        cursor.execute(
+            """
+            INSERT INTO releases
+                (release_id, album_artists, album_title, label,
+                 total_length, num_tracks, tags, release_date, type,
+                 mc_catalog_id, cd_catalog_id, lp_catalog_id,
+                 digital_catalog_id, archive_catalog_id, legacy_catalog_id, bandcamp_url)
             SELECT DISTINCT release_id, album_artists, album_title, label,
                     total_length, num_tracks, tags, release_date, type,
                     mc_catalog_id, cd_catalog_id, lp_catalog_id,
                     digital_catalog_id, archive_catalog_id, legacy_catalog_id, bandcamp_url
             FROM merged_data
             """
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_digital_catalog_id ON releases(digital_catalog_id)"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_cd_catalog_id ON releases(cd_catalog_id)"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_lp_catalog_id ON releases(lp_catalog_id)"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_mc_catalog_id ON releases(mc_catalog_id)"
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_archive_catalog_id ON releases(archive_catalog_id)"
         )
 
         cursor.execute("DROP TABLE IF EXISTS tracks")
@@ -266,7 +322,7 @@ class CatalogMerger:
                 track_title TEXT,
                 runtime INTEGER,
                 isrc TEXT,
-                FOREIGN KEY (release_id) REFERENCES releases(release_id)
+                FOREIGN KEY (release_id) REFERENCES releases(release_id) ON DELETE CASCADE
             )
             """
         )
@@ -283,6 +339,46 @@ class CatalogMerger:
 
         # Drop the original table
         cursor.execute("DROP TABLE merged_data")
+
+        # Create artist table
+        cursor.execute("DROP TABLE IF EXISTS artist")
+        cursor.execute(
+            """
+            CREATE TABLE artist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL
+            )
+            """
+        )
+
+        # Create artist_track_link table
+        cursor.execute("DROP TABLE IF EXISTS artist_track_link")
+        cursor.execute(
+            """
+            CREATE TABLE artist_track_link (
+                artist_id INTEGER NOT NULL,
+                track_id INTEGER NOT NULL,
+                PRIMARY KEY (artist_id, track_id),
+                FOREIGN KEY (artist_id) REFERENCES artist(id),
+                FOREIGN KEY (track_id) REFERENCES tracks(id)
+            )
+            """
+        )
+
+        # Populate artist and artist_track_link from tracks.artists column
+        cursor.execute("SELECT id, artists FROM tracks WHERE artists IS NOT NULL")
+        for track_id, artists_str in cursor.fetchall():
+            artists = re.split(r"\|| & ", artists_str)
+            for artist_name in (a.strip() for a in artists if a.strip()):
+                cursor.execute(
+                    "INSERT OR IGNORE INTO artist (name) VALUES (?)", (artist_name,)
+                )
+                cursor.execute("SELECT id FROM artist WHERE name = ?", (artist_name,))
+                artist_id = cursor.fetchone()[0]
+                cursor.execute(
+                    "INSERT OR IGNORE INTO artist_track_link (artist_id, track_id) VALUES (?, ?)",
+                    (artist_id, track_id),
+                )
 
         conn.commit()
 
