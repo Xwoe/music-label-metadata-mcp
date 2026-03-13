@@ -1,11 +1,24 @@
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import re
 import sqlite3
 import polars as pl
 from sqlalchemy.types import Integer
-from global_config import BASEPATH, DB_PATH, BANDCAMP_FILENAME, CATALOG_FILENAME, ALBUM_LABEL
-from models.names_prefixes import COLUMN_DICT, ReleaseType
+from global_config import (
+    BASEPATH,
+    DB_PATH,
+    MUSICLABEL,
+    COLUMN_DICT,
+    ReleaseType,
+    VARIOUS_ARTISTS,
+)
 from mldg_utils import generate_release_id
+
+BANDCAMP_FILENAME = "bandcamp_albums.csv"
+CATALOG_FILENAME = "catalog_numbers.csv"
 
 
 class CatalogMerger:
@@ -54,7 +67,7 @@ class CatalogMerger:
         )
         self.merged_df = self.merged_df.with_columns(
             pl.when(pl.col("album_artists") == "Various")
-            .then(pl.lit("Various Artists"))
+            .then(pl.lit(VARIOUS_ARTISTS))
             .otherwise(pl.col("album_artists"))
             .alias("album_artists")
         )
@@ -69,7 +82,7 @@ class CatalogMerger:
 
     def clean_up_bandcamp_albums(self):
         self.bandcamp_df = self.bandcamp_df.with_columns(
-            pl.when(pl.col("album_artists") == ALBUM_LABEL)
+            pl.when(pl.col("album_artists") == MUSICLABEL)
             .then(pl.lit("Various"))
             .otherwise(pl.col("album_artists"))
             .alias("album_artists")

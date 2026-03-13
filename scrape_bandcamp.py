@@ -7,16 +7,19 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import mechanicalsoup
 from bs4 import BeautifulSoup
-from global_config import ALBUM_LABEL, BANDCAMP_URL
+from global_config import MUSICLABEL, BANDCAMP_URL, VARIOUS_ARTISTS
 from log import get_logger
 from models.album import Album, Track
 from isrc_getter import ISRCGetter
+
 
 logger = get_logger(__name__)
 
 
 class BandcampScraper:
-    def __init__(self, wait_selector, timeout=10, bandcamp_url: str = ""):
+    def __init__(
+        self, wait_selector="li.music-grid-item", timeout=10, bandcamp_url: str = ""
+    ):
         """
         Use Selenium to load dynamic content, then parse with Beautiful Soup
         """
@@ -59,12 +62,13 @@ class BandcampScraper:
             print(f"Found album URL: {album_url}")
             try:
                 album = self.parse_album(album_url)
-
                 self.csv += album.to_csv(include_header)
                 include_header = False
 
             except Exception as e:
-                logger.error(f"Error parsing album at {album_url}: {e}")
+                logger.error(
+                    f"Error parsing album at {album_url}: {e}. Hint: Unreleased albums can't be parsed."
+                )
                 failed_album_links.append(album_url)
         if failed_album_links:
             logger.warning(
@@ -109,17 +113,26 @@ class BandcampScraper:
         for track_row in track_rows:
             self.parse_track(album, track_row)
 
-        print(f"Parsed album: {album}")
-        album.label = ALBUM_LABEL
+        album.label = MUSICLABEL
         album.num_tracks = len(album.tracks)
+        print(f"Parsed album: {album}")
         return album
 
     def extract_album_title(self, album, soup):
         name_section = soup.find("div", id="name-section")
         artist_link = name_section.find("a")
         if artist_link:
-            album.album_artists = [artist_link.text.strip()]
+            album.album_artists = self.get_album_artists_name(
+                [artist_link.text.strip()]
+            )
         album.title = name_section.find("h2", class_="trackTitle").text.strip()
+
+    def get_album_artists_name(self, artists: list[str]):
+        if not artists:
+            return ""
+        if len(artists) == 1 and artists[0] == MUSICLABEL:
+            return VARIOUS_ARTISTS
+        return artists
 
     def extract_release_date(self, album, soup):
         release_info = soup.find("div", class_="tralbum-credits")
@@ -154,7 +167,7 @@ class BandcampScraper:
         track.isrc = self.get_isrc(artist=track.artists_str, track=track.track_title)
         album.total_length += track.runtime
         album.tracks.append(track)
-        print(f"Parsed track: {track}")
+        # print(f"Parsed track: {track}")
 
     def get_isrc(self, artist, track):
         return self.isrc_getter.get_isrc_from_track(artist, track)

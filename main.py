@@ -7,8 +7,8 @@ import sqlite3
 
 from contextlib import contextmanager
 from mcp.server.fastmcp import FastMCP
-from global_config import DB_PATH, VALID_SERVICES
-from models.names_prefixes import ReleaseType, COLUMN_DICT
+from global_config import DB_PATH, VALID_SERVICES, ReleaseType, COLUMN_DICT
+from init_db import init_db
 from models.album import Album, LIST_SEPARATOR
 from fill_form import MusicBrainzFiller
 from log import get_logger
@@ -501,6 +501,29 @@ async def add_catalog_id_to_release(release_id: str, release_type: ReleaseType) 
         conn.commit()
 
     return f"Successfully updated release '{release_id}' with {release_type.name} catalog ID '{catalog_id}'"
+
+
+@mcp.tool()
+async def initialize_database(force: bool = False) -> str:
+    """
+    Initialises the release catalog database by creating all required tables.
+
+    By default this is idempotent: existing tables are left untouched.
+    Set `force=True` to drop and recreate the entire database file from scratch.
+    WARNING: force=True will permanently delete all existing data.
+    If there is no database file at all, it will be created regardless of the `force` parameter.
+    If calling on an already existing database, ask the user for permission first.
+    """
+    try:
+        init_db(DB_PATH, force=force)
+        action = (
+            "recreated from scratch"
+            if force
+            else "initialised (existing tables untouched)"
+        )
+        return f"Database {action}: {DB_PATH}"
+    except Exception as e:
+        return f"Failed to initialise database: {e}"
 
 
 if __name__ == "__main__":

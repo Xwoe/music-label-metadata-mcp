@@ -6,7 +6,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
-from models.names_prefixes import ReleaseType, COLUMN_DICT
+from global_config import ReleaseType, COLUMN_DICT
 
 
 _MB_RELEASE_URL_RE = re.compile(

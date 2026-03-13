@@ -12,8 +12,7 @@ Pass --force to drop and recreate the entire database file.
 import argparse
 import os
 
-from global_config import DB_PATH
-from models.names_prefixes import COLUMN_DICT, ReleaseType
+from global_config import DB_PATH, COLUMN_DICT, ReleaseType
 
 from sqlalchemy import (
     Column,

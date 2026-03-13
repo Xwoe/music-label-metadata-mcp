@@ -3,13 +3,14 @@ import sys
 import json
 import os
 import pytest
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from log import get_logger
 from scrape_bandcamp import BandcampScraper
 
-from models.names_prefixes import ReleaseType
+from global_config import ReleaseType
 
 logger = get_logger(__name__)
 
