@@ -7,7 +7,8 @@ import sqlite3
 
 from contextlib import contextmanager
 from mcp.server.fastmcp import FastMCP
-from models.names_prefixes import ALBUM_LABEL, ReleaseType, COLUMN_DICT
+from global_config import DB_PATH, VALID_SERVICES
+from models.names_prefixes import ReleaseType, COLUMN_DICT
 from models.album import Album, LIST_SEPARATOR
 from fill_form import MusicBrainzFiller
 from log import get_logger
@@ -19,16 +20,6 @@ logger = get_logger(__name__)
 
 # Initialize FastMCP server
 mcp = FastMCP("MusicLabelDataFiller")
-
-# Constants
-
-USER_AGENT = "album-data-app/1.0"
-
-BASEPATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
-DB_NAME = "release_catalog.db"
-DB_PATH = os.path.join(BASEPATH, DB_NAME)
-
-VALID_SERVICES = ["musicbrainz", "discogs", "cddb"]
 
 # Maps ReleaseType to (link_table_suffix, catalog_id_column)
 _LINK_TABLE_SUFFIXES = {

@@ -1,15 +1,11 @@
+import os
 import re
 import sqlite3
 import polars as pl
-import os
 from sqlalchemy.types import Integer
+from global_config import BASEPATH, DB_PATH, BANDCAMP_FILENAME, CATALOG_FILENAME, ALBUM_LABEL
 from models.names_prefixes import COLUMN_DICT, ReleaseType
 from mldg_utils import generate_release_id
-
-
-BANDCAMP_FILENAME = "bandcamp_albums.csv"
-CATALOG_FILENAME = "catalog_numbers.csv"
-BASEPATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 
 
 class CatalogMerger:
@@ -73,7 +69,7 @@ class CatalogMerger:
 
     def clean_up_bandcamp_albums(self):
         self.bandcamp_df = self.bandcamp_df.with_columns(
-            pl.when(pl.col("album_artists") == os.environ["MUSICLABEL"])
+            pl.when(pl.col("album_artists") == ALBUM_LABEL)
             .then(pl.lit("Various"))
             .otherwise(pl.col("album_artists"))
             .alias("album_artists")
@@ -203,7 +199,7 @@ class CatalogMerger:
             # "num_tracks": Integer,
         }
 
-        conn = sqlite3.connect(os.path.join(BASEPATH, "release_catalog.db"))
+        conn = sqlite3.connect(DB_PATH)
         self.merged_df.to_pandas().to_sql(
             "merged_data",
             conn,
@@ -252,16 +248,39 @@ class CatalogMerger:
         cursor.execute("DROP TABLE IF EXISTS releases")
         cursor.execute(
             """
-            CREATE TABLE releases AS
+            CREATE TABLE releases (
+                release_id          TEXT PRIMARY KEY,
+                album_artists       TEXT,
+                album_title         TEXT,
+                label               TEXT,
+                total_length        INTEGER,
+                num_tracks          INTEGER,
+                tags                TEXT,
+                release_date        TEXT,
+                type                TEXT,
+                mc_catalog_id       TEXT,
+                cd_catalog_id       TEXT,
+                lp_catalog_id       TEXT,
+                digital_catalog_id  TEXT,
+                archive_catalog_id  TEXT,
+                legacy_catalog_id   TEXT,
+                bandcamp_url        TEXT
+            )
+            """
+        )
+        cursor.execute(
+            """
+            INSERT INTO releases
+                (release_id, album_artists, album_title, label,
+                 total_length, num_tracks, tags, release_date, type,
+                 mc_catalog_id, cd_catalog_id, lp_catalog_id,
+                 digital_catalog_id, archive_catalog_id, legacy_catalog_id, bandcamp_url)
             SELECT DISTINCT release_id, album_artists, album_title, label,
                     total_length, num_tracks, tags, release_date, type,
                     mc_catalog_id, cd_catalog_id, lp_catalog_id,
                     digital_catalog_id, archive_catalog_id, legacy_catalog_id, bandcamp_url
             FROM merged_data
             """
-        )
-        cursor.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_release_id ON releases(release_id)"
         )
         cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_digital_catalog_id ON releases(digital_catalog_id)"

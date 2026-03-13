@@ -1,7 +1,5 @@
-import os
 from enum import Enum
-
-ALBUM_LABEL = os.environ["MUSICLABEL"]
+from global_config import ALBUM_LABEL
 
 
 class ReleaseType(Enum):

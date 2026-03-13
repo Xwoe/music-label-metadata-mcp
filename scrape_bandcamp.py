@@ -7,12 +7,12 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import mechanicalsoup
 from bs4 import BeautifulSoup
+from global_config import ALBUM_LABEL
 from log import get_logger
 from models.album import Album, Track, CSV_SEPARATOR, LIST_SEPARATOR
 from isrc_getter import ISRCGetter
 
 logger = get_logger(__name__)
-ALBUM_LABEL = os.environ["MUSICLABEL"]
 
 
 class BandcampScraper:
@@ -174,9 +174,9 @@ class BandcampScraper:
 
     def store_csv(self, csv_data: str, filename: str = "bandcamp_albums.csv"):
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        results_dir = os.path.join(script_dir, "results")
-        os.makedirs(results_dir, exist_ok=True)
-        filename = os.path.join(results_dir, filename)
+        data_dir = os.path.join(script_dir, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        filename = os.path.join(data_dir, filename)
         with open(filename, "w", encoding="utf-8") as f:
             f.write(csv_data)
 
