@@ -7,9 +7,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import mechanicalsoup
 from bs4 import BeautifulSoup
-from global_config import ALBUM_LABEL
+from global_config import ALBUM_LABEL, BANDCAMP_URL
 from log import get_logger
-from models.album import Album, Track, CSV_SEPARATOR, LIST_SEPARATOR
+from models.album import Album, Track
 from isrc_getter import ISRCGetter
 
 logger = get_logger(__name__)
@@ -55,9 +55,7 @@ class BandcampScraper:
                 break
             album_url = album.find("a")["href"]
             if not album_url.startswith("http"):
-                album_url = (
-                    os.environ["MUSICLABEL_BANDCAMP_URL"].rstrip("/") + album_url
-                )
+                album_url = self.bandcamp_url.rstrip("/") + album_url
             print(f"Found album URL: {album_url}")
             try:
                 album = self.parse_album(album_url)
@@ -94,9 +92,7 @@ class BandcampScraper:
         for album in albums:
             album_url = album.find("a")["href"]
             if not album_url.startswith("http"):
-                album_url = (
-                    os.environ["MUSICLABEL_BANDCAMP_URL"].rstrip("/") + album_url
-                )
+                album_url = self.bandcamp_url.rstrip("/") + album_url
             print(f"Found album URL: {album_url}")
             yield album_url
 
@@ -182,7 +178,6 @@ class BandcampScraper:
 
 
 if __name__ == "__main__":
-    bandcamp_url = os.environ["MUSICLABEL_BANDCAMP_URL"]
     wait_selector = "li.music-grid-item"
-    scraper = BandcampScraper(wait_selector=wait_selector, bandcamp_url=bandcamp_url)
+    scraper = BandcampScraper(wait_selector=wait_selector, bandcamp_url=BANDCAMP_URL)
     scraper.run()

@@ -11,3 +11,4 @@ VALID_SERVICES = ["musicbrainz", "discogs", "cddb"]
 USER_AGENT = "album-data-app/1.0"
 
 ALBUM_LABEL = os.environ["MUSICLABEL"]
+BANDCAMP_URL = os.environ["MUSICLABEL_BANDCAMP_URL"]

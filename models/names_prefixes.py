@@ -1,6 +1,4 @@
 from enum import Enum
-from global_config import ALBUM_LABEL
-
 
 class ReleaseType(Enum):
     DIGITAL = "PR-"
