@@ -463,19 +463,24 @@ async def update_bandcamp_data():
         bandcamp_url=os.environ["MUSICLABEL_BANDCAMP_URL"],
     )
     failed_album_links = []
+    new_albums: list[Album] = []
     for album_url in scraper.iterate_albums():
+        if album_exists_in_db(album_url):
+            logger.info(f"Album already exists: {album_url}")
+            break
         try:
-            album = scraper.parse_album(album_url)
-            if not album_exists_in_db(album_url):
-                release_id = insert_album_to_db(album)
-                # we always have digital releases, so we can generate a catalog ID right away
-                await add_catalog_id_to_release(release_id, ReleaseType.DIGITAL)
-            else:
-                logger.info(f"Album already exists: {album_url}")
-                break
+            new_albums.append(scraper.parse_album(album_url))
         except Exception as e:
             logger.error(f"Error parsing album at {album_url}: {e}")
             failed_album_links.append(album_url)
+
+    # Catalog IDs are assigned sequentially, so insert oldest first.
+    new_albums.sort(key=lambda a: a.release_date)
+    for album in new_albums:
+        release_id = insert_album_to_db(album)
+        # we always have digital releases, so we can generate a catalog ID right away
+        await add_catalog_id_to_release(release_id, ReleaseType.DIGITAL)
+
     if failed_album_links:
         logger.warning(
             f"Failed to parse the following album links: {failed_album_links}"
