@@ -1,4 +1,5 @@
 import asyncio
+import csv
 import os
 import sqlite3
 
@@ -6,8 +7,9 @@ import sqlite3
 # import httpx
 
 from contextlib import contextmanager
+from datetime import datetime
 from mcp.server.fastmcp import FastMCP
-from global_config import DB_PATH, VALID_SERVICES, ReleaseType, COLUMN_DICT
+from global_config import BASEPATH, DB_PATH, VALID_SERVICES, ReleaseType, COLUMN_DICT
 from init_db import init_db
 from models.album import Album, LIST_SEPARATOR
 from fill_form import MusicBrainzFiller
@@ -453,6 +455,7 @@ async def update_bandcamp_data():
     is printed at the end.
     Use this command if the user requests to get the latest releases from Bandcamp or to
     sync new releases that were added to Bandcamp after the initial data collection.
+    After running this command also run `export_releases_to_csv` to update the CSV export with the new releases.
     """
 
     scraper = BandcampScraper(
@@ -501,6 +504,101 @@ async def add_catalog_id_to_release(release_id: str, release_type: ReleaseType) 
         conn.commit()
 
     return f"Successfully updated release '{release_id}' with {release_type.name} catalog ID '{catalog_id}'"
+
+
+def _format_release_date(date_str: str | None) -> str:
+    """Reformat a YYYY-MM-DD release date to DD/MM/YYYY. Returns empty string for missing dates."""
+    if not date_str:
+        return ""
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        return date_str
+
+
+@mcp.tool()
+async def export_releases_to_csv(output_path: str | None = None) -> str:
+    """
+    Exports the current release catalog to a CSV file.
+
+    Columns (in order): Release, Artist, Release Date (DD/MM/YYYY), Type,
+    Catalog ID, Tape Catalog ID, CD Catalog ID, LP Catalog ID, Archive Catalog ID,
+    Bandcamp URL, Musicbrainz Link.
+
+    The Musicbrainz Link is taken from musicbrainz_digital_links for the release's
+    digital_catalog_id (blank if no digital MusicBrainz link exists).
+
+    Args:
+        output_path: Optional absolute path for the CSV. Defaults to
+            data/releases.csv in the project data folder.
+    """
+    if output_path is None:
+        output_path = os.path.join(BASEPATH, "releases.csv")
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                r.album_title,
+                r.album_artists,
+                r.release_date,
+                r.type,
+                r.digital_catalog_id,
+                r.mc_catalog_id,
+                r.cd_catalog_id,
+                r.lp_catalog_id,
+                r.archive_catalog_id,
+                r.bandcamp_url,
+                mb.url_record AS musicbrainz_url
+            FROM releases r
+            LEFT JOIN (
+                SELECT digital_catalog_id, MIN(url_record) AS url_record
+                FROM musicbrainz_digital_links
+                WHERE digital_catalog_id IS NOT NULL
+                GROUP BY digital_catalog_id
+            ) mb ON r.digital_catalog_id = mb.digital_catalog_id
+            ORDER BY r.release_date DESC
+            """
+        )
+        rows = cursor.fetchall()
+
+    headers = [
+        "Release",
+        "Artist",
+        "Release Date",
+        "Type",
+        "Catalog ID",
+        "Tape Catalog ID",
+        "CD Catalog ID",
+        "LP Catalog ID",
+        "Archive Catalog ID",
+        "Bandcamp URL",
+        "Musicbrainz Link",
+    ]
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        for row in rows:
+            writer.writerow(
+                [
+                    row["album_title"] or "",
+                    row["album_artists"] or "",
+                    _format_release_date(row["release_date"]),
+                    row["type"] or "",
+                    row["digital_catalog_id"] or "",
+                    row["mc_catalog_id"] or "",
+                    row["cd_catalog_id"] or "",
+                    row["lp_catalog_id"] or "",
+                    row["archive_catalog_id"] or "",
+                    row["bandcamp_url"] or "",
+                    row["musicbrainz_url"] or "",
+                ]
+            )
+
+    return f"Exported {len(rows)} releases to {output_path}"
 
 
 @mcp.tool()
