@@ -8,10 +8,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
 from global_config import ReleaseType, COLUMN_DICT
 
-
 _MB_RELEASE_URL_RE = re.compile(
     r"https://musicbrainz\.org/release/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
+_MUSICBRAINZ_LOGIN_URL = "https://metabrainz.org/login"
 
 
 class MusicBrainzFiller:
@@ -32,7 +32,7 @@ class MusicBrainzFiller:
             )
             return
 
-        self.driver.get("https://musicbrainz.org/login")
+        self.driver.get(_MUSICBRAINZ_LOGIN_URL)
         try:
             user_input = self.wait.until(
                 EC.presence_of_element_located((By.ID, "id-username"))
@@ -49,7 +49,7 @@ class MusicBrainzFiller:
             login_btn.click()
 
             # Wait for redirect to home page or dashboard to confirm login
-            self.wait.until(EC.url_changes("https://musicbrainz.org/login"))
+            self.wait.until(EC.url_changes(_MUSICBRAINZ_LOGIN_URL))
             print("Logged in successfully.")
 
         except Exception as e:
