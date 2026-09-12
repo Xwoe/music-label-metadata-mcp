@@ -400,8 +400,50 @@ def album_exists_in_db(bandcamp_url: str) -> bool:
         return cursor.fetchone() is not None
 
 
-def insert_album_to_db(album: Album) -> str:
-    """Inserts an Album (and its tracks) into the releases and tracks tables."""
+def _ensure_needs_refresh_column() -> None:
+    """Adds the `needs_refresh` column to databases created before it existed.
+
+    `needs_refresh = 1` marks a release whose data is still incomplete (typically
+    a pre-order whose tracks have no duration yet) so a later sync run knows to
+    re-scrape it and back-fill the missing information.
+    """
+    with get_db_connection() as conn:
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(releases)")]
+        if "needs_refresh" not in columns:
+            conn.execute(
+                "ALTER TABLE releases ADD COLUMN needs_refresh INTEGER DEFAULT 0"
+            )
+            conn.commit()
+            logger.info("Added 'needs_refresh' column to releases table.")
+
+
+def album_is_incomplete(album: Album) -> bool:
+    """A release is incomplete when track data is still missing -- typically a
+    pre-order whose tracks have no duration until the album is publicly released.
+    Such releases are flagged so a later sync run can back-fill the data.
+    """
+    if album.num_tracks == 0 or not album.tracks:
+        return True
+    return any((track.runtime or 0) <= 0 for track in album.tracks)
+
+
+def _get_releases_needing_refresh() -> list[tuple[str, str, str]]:
+    """Returns (release_id, bandcamp_url, album_title) for releases flagged
+    as incomplete (needs_refresh = 1)."""
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            "SELECT release_id, bandcamp_url, album_title FROM releases "
+            "WHERE needs_refresh = 1"
+        ).fetchall()
+    return [(r["release_id"], r["bandcamp_url"], r["album_title"]) for r in rows]
+
+
+def insert_album_to_db(album: Album, needs_refresh: bool = False) -> str:
+    """Inserts an Album (and its tracks) into the releases and tracks tables.
+
+    Pass `needs_refresh=True` for releases with incomplete data (e.g. pre-orders)
+    so a later sync run revisits them and fills in the missing information.
+    """
     release_id = generate_release_id(album.album_artists, album.title)
     artists_str = LIST_SEPARATOR.join(album.album_artists)
     tags_str = LIST_SEPARATOR.join(album.tags)
@@ -411,8 +453,8 @@ def insert_album_to_db(album: Album) -> str:
         conn.execute(
             """INSERT INTO releases
                (release_id, album_artists, album_title, label, total_length, num_tracks,
-                tags, release_date, bandcamp_url)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                tags, release_date, bandcamp_url, needs_refresh)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 release_id,
                 artists_str,
@@ -423,6 +465,7 @@ def insert_album_to_db(album: Album) -> str:
                 tags_str,
                 release_date_str,
                 album.bandcamp_url,
+                1 if needs_refresh else 0,
             ),
         )
         conn.executemany(
@@ -441,8 +484,63 @@ def insert_album_to_db(album: Album) -> str:
             ],
         )
         conn.commit()
-    logger.info(f"Inserted album '{album.title}' with release_id={release_id}")
+    logger.info(
+        f"Inserted album '{album.title}' with release_id={release_id}"
+        + (" (flagged for later refresh)" if needs_refresh else "")
+    )
     return release_id
+
+
+def update_release_track_data(release_id: str, album: Album) -> bool:
+    """Replaces the stored tracks for an existing release with freshly scraped
+    data and updates the release-level fields that depend on them (total length,
+    track count, release date, tags). Clears `needs_refresh` once the album has
+    complete data. Returns True if the release is still incomplete.
+    """
+    still_incomplete = album_is_incomplete(album)
+    artists_str = LIST_SEPARATOR.join(album.album_artists)
+    tags_str = LIST_SEPARATOR.join(album.tags)
+    release_date_str = album.release_date.strftime("%Y-%m-%d")
+
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM tracks WHERE release_id = ?", (release_id,))
+        conn.executemany(
+            """INSERT INTO tracks (release_id, track_number, artists, track_title, runtime, isrc)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    release_id,
+                    track.track_number,
+                    LIST_SEPARATOR.join(track.artists),
+                    track.track_title,
+                    track.runtime,
+                    track.isrc,
+                )
+                for track in album.tracks
+            ],
+        )
+        conn.execute(
+            """UPDATE releases
+               SET album_artists = ?, album_title = ?, total_length = ?, num_tracks = ?,
+                   tags = ?, release_date = ?, needs_refresh = ?
+               WHERE release_id = ?""",
+            (
+                artists_str,
+                album.title,
+                album.total_length,
+                album.num_tracks,
+                tags_str,
+                release_date_str,
+                1 if still_incomplete else 0,
+                release_id,
+            ),
+        )
+        conn.commit()
+    logger.info(
+        f"Refreshed album '{album.title}' (release_id={release_id}); "
+        + ("still incomplete" if still_incomplete else "now complete")
+    )
+    return still_incomplete
 
 
 @mcp.tool()
@@ -452,11 +550,16 @@ async def update_bandcamp_data():
     This tool can be run periodically to keep the database in sync with the Bandcamp page.
     If any albums fail to parse, their URLs are logged for manual review.
     All successfully parsed albums are inserted into the database, and a summary of the operation
-    is printed at the end.
+    is returned.
+    Pre-orders / not-yet-released albums are imported too, but their still-missing
+    data (track durations, ISRCs) is flagged so a later run back-fills it: every run
+    also revisits previously flagged releases and updates any information that has
+    since become available.
     Use this command if the user requests to get the latest releases from Bandcamp or to
     sync new releases that were added to Bandcamp after the initial data collection.
     After running this command also run `export_releases_to_csv` to update the CSV export with the new releases.
     """
+    _ensure_needs_refresh_column()
 
     scraper = BandcampScraper(
         wait_selector="li.music-grid-item",
@@ -476,15 +579,56 @@ async def update_bandcamp_data():
 
     # Catalog IDs are assigned sequentially, so insert oldest first.
     new_albums.sort(key=lambda a: a.release_date)
+    added: list[str] = []
+    pending: list[str] = []
+    added_ids: set[str] = set()
     for album in new_albums:
-        release_id = insert_album_to_db(album)
+        incomplete = album_is_incomplete(album)
+        release_id = insert_album_to_db(album, needs_refresh=incomplete)
+        added_ids.add(release_id)
         # we always have digital releases, so we can generate a catalog ID right away
         await add_catalog_id_to_release(release_id, ReleaseType.DIGITAL)
+        added.append(album.title)
+        if incomplete:
+            pending.append(album.title)
+
+    # Refresh pass: revisit releases previously flagged as incomplete (e.g.
+    # pre-orders) and back-fill data that has since become available.
+    refreshed: list[str] = []
+    for release_id, url, title in _get_releases_needing_refresh():
+        if release_id in added_ids:
+            continue  # just inserted this run; nothing new to fetch yet
+        try:
+            album = scraper.parse_album(url)
+        except Exception as e:
+            logger.error(f"Error refreshing album at {url}: {e}")
+            pending.append(title)
+            continue
+        if update_release_track_data(release_id, album):
+            pending.append(title)
+        else:
+            refreshed.append(title)
 
     if failed_album_links:
         logger.warning(
             f"Failed to parse the following album links: {failed_album_links}"
         )
+
+    parts = [f"Bandcamp sync complete. Added {len(added)} new release(s)"]
+    if added:
+        parts.append(": " + ", ".join(added))
+    parts.append(".")
+    if refreshed:
+        parts.append(f" Back-filled now-complete release(s): {', '.join(refreshed)}.")
+    if pending:
+        parts.append(
+            f" Awaiting later refresh (pre-orders / incomplete data): {', '.join(pending)}."
+        )
+    if failed_album_links:
+        parts.append(f" Failed to parse: {failed_album_links}.")
+    summary = "".join(parts)
+    logger.info(summary)
+    return summary
 
 
 @mcp.tool()

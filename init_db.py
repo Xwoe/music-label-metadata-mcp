@@ -53,6 +53,9 @@ releases = Table(
     Column("archive_catalog_id", Text),
     Column("legacy_catalog_id", Text),
     Column("bandcamp_url", Text),
+    # 1 when the release still has incomplete data (e.g. a pre-order whose track
+    # durations/ISRCs aren't public yet); a later sync run back-fills and clears it.
+    Column("needs_refresh", Integer, default=0),
     Index("idx_releases_mc_catalog_id", COLUMN_DICT[ReleaseType.CASSETTE], unique=True),
     Index("idx_releases_cd_catalog_id", COLUMN_DICT[ReleaseType.CD], unique=True),
     Index("idx_releases_lp_catalog_id", COLUMN_DICT[ReleaseType.LP], unique=True),

@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from datetime import datetime
@@ -106,17 +107,76 @@ class BandcampScraper:
         browser = mechanicalsoup.StatefulBrowser()
         browser.open(album_url)
         soup = browser.page
-        self.extract_album_title(album, soup)
-        self.extract_release_date(album, soup)
-        self.extract_tags(album, soup)
-        track_rows = soup.select("table#track_table tr.track_row_view")
-        for track_row in track_rows:
-            self.parse_track(album, track_row)
 
+        data_el = soup.find(attrs={"data-tralbum": True})
+        if data_el is not None:
+            # Preferred path: Bandcamp embeds the full track listing (titles,
+            # numbers and durations) in the data-tralbum JSON blob. This works
+            # even for pre-order / not-yet-released albums, whose rendered HTML
+            # track rows are only partially present -- locked tracks have no
+            # track-title span and no duration until the album goes public, which
+            # made the HTML-table parser crash on every multi-track pre-order.
+            tralbum = json.loads(data_el["data-tralbum"])
+            self.extract_from_tralbum(album, tralbum)
+        else:
+            # Legacy fallback: parse the rendered HTML track table.
+            self.extract_album_title(album, soup)
+            self.extract_release_date(album, soup)
+            track_rows = soup.select("table#track_table tr.track_row_view")
+            for track_row in track_rows:
+                self.parse_track(album, track_row)
+
+        self.extract_tags(album, soup)
         album.label = MUSICLABEL
         album.num_tracks = len(album.tracks)
         print(f"Parsed album: {album}")
         return album
+
+    def extract_from_tralbum(self, album, tralbum):
+        current = tralbum.get("current") or {}
+        artist = (tralbum.get("artist") or "").strip()
+        album.album_artists = self.get_album_artists_name([artist] if artist else [])
+        album.title = (current.get("title") or "").strip()
+        release_date = current.get("release_date") or tralbum.get("album_release_date")
+        parsed_date = self.parse_bandcamp_date(release_date)
+        if parsed_date:
+            album.release_date = parsed_date
+        for track_info in tralbum.get("trackinfo") or []:
+            self.parse_track_from_json(album, track_info)
+
+    def parse_track_from_json(self, album, track_info):
+        track = Track()
+        track.track_number = int(track_info.get("track_num") or (len(album.tracks) + 1))
+        full_title = (track_info.get("title") or "").strip()
+        full_title_parts = full_title.split(" - ")
+        if len(full_title_parts) > 1:
+            track.artists = [part.strip() for part in full_title_parts[:-1]]
+            track.track_title = full_title_parts[-1].strip()
+        else:
+            track.artists = album.album_artists
+            track.track_title = full_title
+        duration = track_info.get("duration") or 0
+        track.runtime = int(round(float(duration)))
+        # A locked pre-order track reports a 0 duration and is not on streaming
+        # services yet, so only look up an ISRC once the track is actually public.
+        if track.runtime > 0:
+            track.isrc = self.get_isrc(artist=track.artists_str, track=track.track_title)
+        else:
+            track.isrc = ""
+        album.total_length += track.runtime
+        album.tracks.append(track)
+
+    @staticmethod
+    def parse_bandcamp_date(date_str):
+        """Parses a Bandcamp date string like '22 Sep 2026 00:00:00 GMT'."""
+        if not date_str:
+            return None
+        for fmt in ("%d %b %Y %H:%M:%S GMT", "%d %b %Y %H:%M:%S %Z"):
+            try:
+                return datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+        return None
 
     def extract_album_title(self, album, soup):
         name_section = soup.find("div", id="name-section")
@@ -127,11 +187,13 @@ class BandcampScraper:
             )
         album.title = name_section.find("h2", class_="trackTitle").text.strip()
 
-    def get_album_artists_name(self, artists: list[str]):
+    def get_album_artists_name(self, artists: list[str]) -> list[str]:
+        # Always return a list: album_artists is later joined with LIST_SEPARATOR,
+        # so returning a bare string here mangles it into "V|a|r|i|o|u|s|...".
         if not artists:
-            return ""
+            return []
         if len(artists) == 1 and artists[0] == MUSICLABEL:
-            return VARIOUS_ARTISTS
+            return [VARIOUS_ARTISTS]
         return artists
 
     def extract_release_date(self, album, soup):
