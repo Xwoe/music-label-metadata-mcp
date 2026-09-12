@@ -14,7 +14,7 @@ from init_db import init_db
 from models.album import Album, LIST_SEPARATOR
 from fill_form import MusicBrainzFiller
 from log import get_logger
-from scrape_bandcamp import BandcampScraper
+from scrape_bandcamp import BandcampScraper, classify_release_type
 from mldg_utils import generate_release_id
 
 logger = get_logger(__name__)
@@ -453,8 +453,8 @@ def insert_album_to_db(album: Album, needs_refresh: bool = False) -> str:
         conn.execute(
             """INSERT INTO releases
                (release_id, album_artists, album_title, label, total_length, num_tracks,
-                tags, release_date, bandcamp_url, needs_refresh)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                tags, release_date, type, bandcamp_url, needs_refresh)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 release_id,
                 artists_str,
@@ -464,6 +464,7 @@ def insert_album_to_db(album: Album, needs_refresh: bool = False) -> str:
                 album.num_tracks,
                 tags_str,
                 release_date_str,
+                album.type or None,
                 album.bandcamp_url,
                 1 if needs_refresh else 0,
             ),
@@ -522,7 +523,7 @@ def update_release_track_data(release_id: str, album: Album) -> bool:
         conn.execute(
             """UPDATE releases
                SET album_artists = ?, album_title = ?, total_length = ?, num_tracks = ?,
-                   tags = ?, release_date = ?, needs_refresh = ?
+                   tags = ?, release_date = ?, type = COALESCE(type, ?), needs_refresh = ?
                WHERE release_id = ?""",
             (
                 artists_str,
@@ -531,6 +532,7 @@ def update_release_track_data(release_id: str, album: Album) -> bool:
                 album.num_tracks,
                 tags_str,
                 release_date_str,
+                album.type or None,
                 1 if still_incomplete else 0,
                 release_id,
             ),

@@ -17,6 +17,38 @@ from isrc_getter import ISRCGetter
 logger = get_logger(__name__)
 
 
+def classify_release_type(album_artists, title, num_tracks, item_type=None) -> str:
+    """Best-effort release type from the signals Bandcamp actually exposes.
+
+    Bandcamp only distinguishes an album from a standalone track, so:
+      - Single       -> a standalone track, a single-track release, or a
+                        title explicitly marked "(Single)".
+      - Compilation  -> a Various Artists release, or a title saying "Compilation".
+      - EP           -> only when the title explicitly says "EP" (Bandcamp gives
+                        no way to tell an EP from an album otherwise).
+      - Album        -> the default for everything else.
+
+    `album_artists` may be a list (from a scraped Album) or the joined string
+    (from a database row).
+    """
+    if isinstance(album_artists, (list, tuple)):
+        artists_str = ", ".join(album_artists)
+    else:
+        artists_str = album_artists or ""
+    title = title or ""
+    title_lower = title.lower()
+
+    if "(single)" in title_lower:
+        return "Single"
+    if (item_type or "").lower() == "track" or (num_tracks or 0) <= 1:
+        return "Single"
+    if "compilation" in title_lower or artists_str.strip().lower() == VARIOUS_ARTISTS.lower():
+        return "Compilation"
+    if re.search(r"\bEP\b", title):
+        return "EP"
+    return "Album"
+
+
 class BandcampScraper:
     def __init__(
         self, wait_selector="li.music-grid-item", timeout=10, bandcamp_url: str = ""
@@ -108,6 +140,7 @@ class BandcampScraper:
         browser.open(album_url)
         soup = browser.page
 
+        item_type = None
         data_el = soup.find(attrs={"data-tralbum": True})
         if data_el is not None:
             # Preferred path: Bandcamp embeds the full track listing (titles,
@@ -117,6 +150,7 @@ class BandcampScraper:
             # track-title span and no duration until the album goes public, which
             # made the HTML-table parser crash on every multi-track pre-order.
             tralbum = json.loads(data_el["data-tralbum"])
+            item_type = tralbum.get("item_type")
             self.extract_from_tralbum(album, tralbum)
         else:
             # Legacy fallback: parse the rendered HTML track table.
@@ -129,6 +163,13 @@ class BandcampScraper:
         self.extract_tags(album, soup)
         album.label = MUSICLABEL
         album.num_tracks = len(album.tracks)
+        # Bandcamp exposes only album-vs-track; fall back to the URL when the
+        # JSON blob is absent (a /track/ URL is a standalone single).
+        if not item_type:
+            item_type = "track" if "/track/" in album_url else "album"
+        album.type = classify_release_type(
+            album.album_artists, album.title, album.num_tracks, item_type
+        )
         print(f"Parsed album: {album}")
         return album
 

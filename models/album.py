@@ -44,6 +44,7 @@ class Track(BaseModel):
 class Album(BaseModel):
     album_artists: List[str] = []
     title: str = ""
+    type: str = ""
     is_compilation: bool = False
     release_date: datetime = datetime.now()
     label: str = ""
