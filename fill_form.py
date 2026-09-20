@@ -6,12 +6,15 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select
+from selenium.common.exceptions import TimeoutException
 from global_config import ReleaseType, COLUMN_DICT
 
 _MB_RELEASE_URL_RE = re.compile(
     r"https://musicbrainz\.org/release/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
-_MUSICBRAINZ_LOGIN_URL = "https://metabrainz.org/login"
+# musicbrainz.org/login redirects into the MetaBrainz SSO (OAuth2) sign-in form;
+# authenticating there carries the OAuth `next` param back to musicbrainz.org.
+_MUSICBRAINZ_LOGIN_URL = "https://musicbrainz.org/login"
 
 
 class MusicBrainzFiller:
@@ -32,24 +35,40 @@ class MusicBrainzFiller:
             )
             return
 
+        # MusicBrainz authenticates via MetaBrainz SSO (OAuth2). The sign-in form
+        # is JS-rendered on metabrainz.org; after submitting, the OAuth flow
+        # redirects back to musicbrainz.org already authenticated.
         self.driver.get(_MUSICBRAINZ_LOGIN_URL)
         try:
-            user_input = self.wait.until(
-                EC.presence_of_element_located((By.ID, "id-username"))
-            )
+            try:
+                user_input = self.wait.until(
+                    EC.presence_of_element_located((By.ID, "username"))
+                )
+            except TimeoutException:
+                # No sign-in form appeared -- most likely an existing session.
+                if "/login" not in self.driver.current_url:
+                    print("Already logged in; skipping sign-in form.")
+                    return
+                raise
+
+            user_input.clear()
             user_input.send_keys(username)
 
-            pass_input = self.driver.find_element(By.ID, "id-password")
+            pass_input = self.driver.find_element(By.ID, "password")
+            pass_input.clear()
             pass_input.send_keys(password)
 
-            # Click the login button
+            # Click the "Sign in" button
             login_btn = self.driver.find_element(
-                By.CSS_SELECTOR, "span.buttons.login button[type='submit']"
+                By.CSS_SELECTOR, "button[type='submit'].main-action-button"
             )
             login_btn.click()
 
-            # Wait for redirect to home page or dashboard to confirm login
-            self.wait.until(EC.url_changes(_MUSICBRAINZ_LOGIN_URL))
+            # Wait for the OAuth redirect to land back on musicbrainz.org.
+            self.wait.until(
+                lambda d: "musicbrainz.org" in d.current_url
+                and "/login" not in d.current_url
+            )
             print("Logged in successfully.")
 
         except Exception as e:

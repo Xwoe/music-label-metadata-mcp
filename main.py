@@ -674,10 +674,12 @@ async def export_releases_to_csv(output_path: str | None = None) -> str:
 
     Columns (in order): Release, Artist, Release Date (DD/MM/YYYY), Type,
     Catalog ID, Tape Catalog ID, CD Catalog ID, LP Catalog ID, Archive Catalog ID,
-    Bandcamp URL, Musicbrainz Link.
+    Bandcamp URL, Musicbrainz Link, Musicbrainz Tape Link, Musicbrainz CD Link,
+    Musicbrainz LP Link.
 
-    The Musicbrainz Link is taken from musicbrainz_digital_links for the release's
-    digital_catalog_id (blank if no digital MusicBrainz link exists).
+    Each Musicbrainz link column is taken from the matching per-format link table
+    (musicbrainz_digital_links / _mc_links / _cd_links / _lp_links) joined on the
+    release's corresponding catalog ID (blank when no such link exists).
 
     Args:
         output_path: Optional absolute path for the CSV. Defaults to
@@ -701,7 +703,10 @@ async def export_releases_to_csv(output_path: str | None = None) -> str:
                 r.lp_catalog_id,
                 r.archive_catalog_id,
                 r.bandcamp_url,
-                mb.url_record AS musicbrainz_url
+                mb.url_record AS musicbrainz_url,
+                mb_mc.url_record AS musicbrainz_mc_url,
+                mb_cd.url_record AS musicbrainz_cd_url,
+                mb_lp.url_record AS musicbrainz_lp_url
             FROM releases r
             LEFT JOIN (
                 SELECT digital_catalog_id, MIN(url_record) AS url_record
@@ -709,6 +714,24 @@ async def export_releases_to_csv(output_path: str | None = None) -> str:
                 WHERE digital_catalog_id IS NOT NULL
                 GROUP BY digital_catalog_id
             ) mb ON r.digital_catalog_id = mb.digital_catalog_id
+            LEFT JOIN (
+                SELECT mc_catalog_id, MIN(url_record) AS url_record
+                FROM musicbrainz_mc_links
+                WHERE mc_catalog_id IS NOT NULL
+                GROUP BY mc_catalog_id
+            ) mb_mc ON r.mc_catalog_id = mb_mc.mc_catalog_id
+            LEFT JOIN (
+                SELECT cd_catalog_id, MIN(url_record) AS url_record
+                FROM musicbrainz_cd_links
+                WHERE cd_catalog_id IS NOT NULL
+                GROUP BY cd_catalog_id
+            ) mb_cd ON r.cd_catalog_id = mb_cd.cd_catalog_id
+            LEFT JOIN (
+                SELECT lp_catalog_id, MIN(url_record) AS url_record
+                FROM musicbrainz_lp_links
+                WHERE lp_catalog_id IS NOT NULL
+                GROUP BY lp_catalog_id
+            ) mb_lp ON r.lp_catalog_id = mb_lp.lp_catalog_id
             ORDER BY r.release_date DESC
             """
         )
@@ -726,6 +749,9 @@ async def export_releases_to_csv(output_path: str | None = None) -> str:
         "Archive Catalog ID",
         "Bandcamp URL",
         "Musicbrainz Link",
+        "Musicbrainz Tape Link",
+        "Musicbrainz CD Link",
+        "Musicbrainz LP Link",
     ]
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
@@ -746,6 +772,9 @@ async def export_releases_to_csv(output_path: str | None = None) -> str:
                     row["archive_catalog_id"] or "",
                     row["bandcamp_url"] or "",
                     row["musicbrainz_url"] or "",
+                    row["musicbrainz_mc_url"] or "",
+                    row["musicbrainz_cd_url"] or "",
+                    row["musicbrainz_lp_url"] or "",
                 ]
             )
 
