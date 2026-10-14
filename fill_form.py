@@ -89,6 +89,8 @@ class MusicBrainzFiller:
             self.fill_artist_title(release_data)
             self.fill_type(release_data)
             self.fill_release_event(release_data, medium)
+            # 3. Edit note (bottom of the page)
+            self.fill_edit_note()
 
             print("Form pre-filled.")
             return track_list
@@ -120,6 +122,30 @@ class MusicBrainzFiller:
                     type_select.select_by_visible_text(release_type.title())
             except Exception as e:
                 print(f"Could not select release type '{release_type}': {e}")
+
+    def fill_edit_note(self, note: str = "data from bandcamp"):
+        """Prefills the release editor's edit note field.
+
+        The edit note textarea lives at the bottom of the Add Release page; its
+        exact id has varied, so try the known selectors and fill the first match.
+        """
+        selectors = [
+            (By.ID, "edit-note-text"),
+            (By.CSS_SELECTOR, "textarea.edit-note"),
+            (By.CSS_SELECTOR, "textarea[name='edit_note']"),
+        ]
+        for by, selector in selectors:
+            try:
+                note_input = self.driver.find_element(by, selector)
+            except Exception:
+                continue
+            try:
+                note_input.clear()
+                note_input.send_keys(note)
+                return
+            except Exception:
+                continue
+        print("Could not find the edit note field to prefill.")
 
     def fill_release_event(
         self, release_data, medium: ReleaseType = ReleaseType.DIGITAL
